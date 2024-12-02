@@ -13,6 +13,7 @@ namespace System.Text.Json
     public static partial class JsonSerializer
     {
         // We flush the Stream when the buffer is >=90% of capacity.
+        //当缓冲区容量>=90%时，我们刷新流。
         // This threshold is a compromise between buffer utilization and minimizing cases where the buffer
         // needs to be expanded\doubled because it is not large enough to write the current property or element.
         // We check for flush after each JSON property and element is written to the buffer.
