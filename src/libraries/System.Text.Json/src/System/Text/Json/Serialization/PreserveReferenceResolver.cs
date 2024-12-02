@@ -8,6 +8,7 @@ namespace System.Text.Json.Serialization
 {
     /// <summary>
     /// The default ReferenceResolver implementation to handle duplicate object references.
+    /// 处理重复对象引用的默认ReferenceResolver实现。
     /// </summary>
     internal sealed class PreserveReferenceResolver : ReferenceResolver
     {

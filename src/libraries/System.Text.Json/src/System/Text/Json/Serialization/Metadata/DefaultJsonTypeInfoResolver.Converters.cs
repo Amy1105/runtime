@@ -10,6 +10,9 @@ using System.Text.Json.Serialization.Converters;
 
 namespace System.Text.Json.Serialization.Metadata
 {
+    /// <summary>
+    /// 默认JsonTypeInfo解析器
+    /// </summary>
     public partial class DefaultJsonTypeInfoResolver
     {
         private static Dictionary<Type, JsonConverter>? s_defaultSimpleConverters;

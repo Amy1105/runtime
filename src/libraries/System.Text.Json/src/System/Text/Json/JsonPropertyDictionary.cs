@@ -10,6 +10,8 @@ namespace System.Text.Json
     /// <summary>
     /// Keeps both a List and Dictionary in sync to enable deterministic enumeration ordering of List
     /// and performance benefits of Dictionary once a threshold is hit.
+    ///   使List和Dictionary保持同步，以实现List的确定枚举顺序
+    ///   一旦达到阈值，Dictionary的性能就会提高。
     /// </summary>
     internal sealed partial class JsonPropertyDictionary<T> where T : class?
     {

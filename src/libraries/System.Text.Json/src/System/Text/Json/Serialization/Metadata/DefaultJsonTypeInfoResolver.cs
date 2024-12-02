@@ -9,6 +9,7 @@ namespace System.Text.Json.Serialization.Metadata
 {
     /// <summary>
     /// Defines the default, reflection-based JSON contract resolver used by System.Text.Json.
+    /// 定义系统使用的默认基于反射的JSON合约解析器。文本。Json。
     /// </summary>
     /// <remarks>
     /// The contract resolver used by <see cref="JsonSerializerOptions.Default"/>.

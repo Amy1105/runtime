@@ -7,33 +7,33 @@ namespace System.Text.Json
 {
     /// <summary>
     /// Defines a thread-local cache for JsonSerializer to store reusable Utf8JsonWriter/IBufferWriter instances.
+    /// 为JsonSerializer定义一个线程本地缓存，以存储可重用的Utf8JsonWriter/IBufferWriter实例。
     /// </summary>
     internal static class Utf8JsonWriterCache
     {
-        [ThreadStatic]
+        [ThreadStatic]  //表示静态字段的值对于每个线程都是唯一的。
         private static ThreadLocalState? t_threadLocalState;
 
         public static Utf8JsonWriter RentWriterAndBuffer(JsonSerializerOptions options, out PooledByteBufferWriter bufferWriter)
         {
             ThreadLocalState state = t_threadLocalState ??= new();
             Utf8JsonWriter writer;
-
             if (state.RentedWriters++ == 0)
             {
                 // First JsonSerializer call in the stack -- initialize & return the cached instances.
+                //堆栈中的第一个JsonSerializer调用--初始化并返回缓存的实例。
                 bufferWriter = state.BufferWriter;
                 writer = state.Writer;
-
                 bufferWriter.InitializeEmptyInstance(options.DefaultBufferSize);
                 writer.Reset(bufferWriter, options.GetWriterOptions());
             }
             else
             {
                 // We're in a recursive JsonSerializer call -- return fresh instances.
+                //我们正在进行一个递归JsonSerializer调用——返回新的实例。
                 bufferWriter = new PooledByteBufferWriter(options.DefaultBufferSize);
                 writer = new Utf8JsonWriter(bufferWriter, options.GetWriterOptions());
             }
-
             return writer;
         }
 

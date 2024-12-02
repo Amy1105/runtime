@@ -22,6 +22,7 @@ namespace System.Text.Json.Serialization
 
         /// <summary>
         /// Gets the type being converted by the current converter instance.
+        /// 获取当前转换器实例正在转换的类型。
         /// </summary>
         /// <remarks>
         /// For instances of type <see cref="JsonConverter{T}"/> returns typeof(T),
@@ -31,6 +32,7 @@ namespace System.Text.Json.Serialization
 
         /// <summary>
         /// Determines whether the type can be converted.
+        /// 确定是否可以转换类型。
         /// </summary>
         /// <param name="typeToConvert">The type is checked as to whether it can be converted.</param>
         /// <returns>True if the type can be converted, false otherwise.</returns>
@@ -51,13 +53,17 @@ namespace System.Text.Json.Serialization
 
         /// <summary>
         /// Invoked by the base contructor to populate the initial value of the <see cref="ConverterStrategy"/> property.
+        /// 由基本构造器调用以填充<see cref=“ConverterStrategy”/>属性的初始值。
         /// Used for declaring the default strategy for specific converter hierarchies without explicitly setting in a constructor.
+        /// 用于声明特定转换器层次结构的默认策略，而无需在构造函数中显式设置。
         /// </summary>
         private protected abstract ConverterStrategy GetDefaultConverterStrategy();
 
         /// <summary>
         /// Indicates that the converter can consume the <see cref="JsonTypeInfo.CreateObject"/> delegate.
+        /// 表示转换器可以使用<see cref=“JsonTypeInfo.CreateObject”/>委托。
         /// Needed because certain collection converters cannot support arbitrary delegates.
+        /// 需要，因为某些集合转换器无法支持任意委托。
         /// TODO remove once https://github.com/dotnet/runtime/pull/73395/ and
         /// https://github.com/dotnet/runtime/issues/71944 have been addressed.
         /// </summary>
@@ -65,27 +71,33 @@ namespace System.Text.Json.Serialization
 
         /// <summary>
         /// Indicates that the converter is compatible with <see cref="JsonObjectCreationHandling.Populate"/>.
+        /// 表示该转换器与<see cref=“JsonObjectCreationHandling.Populate”/>兼容。
         /// </summary>
         internal virtual bool CanPopulate => false;
 
         /// <summary>
         /// Can direct Read or Write methods be called (for performance).
+        /// 可以直接调用Read或Write方法（为了性能）。
         /// </summary>
         internal bool CanUseDirectReadOrWrite { get; set; }
 
         /// <summary>
         /// The converter supports writing and reading metadata.
+        /// 转换器支持写入和读取元数据。
         /// </summary>
         internal virtual bool CanHaveMetadata => false;
 
         /// <summary>
         /// The converter supports polymorphic writes; only reserved for System.Object types.
+        /// 转换器支持多态写入；仅保留给系统。对象类型。
         /// </summary>
         internal bool CanBePolymorphic { get; set; }
 
         /// <summary>
         /// The serializer must read ahead all contents of the next JSON value
         /// before calling into the converter for deserialization.
+        ///   序列化程序必须提前读取下一个JSON值的所有内容
+        ///   在调用转换器进行反序列化之前。
         /// </summary>
         internal bool RequiresReadAhead { get; set; }
 

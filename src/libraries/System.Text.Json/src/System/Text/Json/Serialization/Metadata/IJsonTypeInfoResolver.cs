@@ -5,6 +5,7 @@ namespace System.Text.Json.Serialization.Metadata
 {
     /// <summary>
     /// Used to resolve the JSON serialization contract for requested types.
+    /// 用于解析所请求类型的JSON序列化合约。
     /// </summary>
     public interface IJsonTypeInfoResolver
     {

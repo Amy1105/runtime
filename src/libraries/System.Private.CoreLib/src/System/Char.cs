@@ -55,6 +55,13 @@ namespace System
         // - 0x40 bit if set means 'is uppercase letter'
         // - 0x20 bit if set means 'is lowercase letter'
         // - bottom 5 bits are the UnicodeCategory of the character
+        /*
+             包含有关C0、基本拉丁语、C1和拉丁语-1补充范围[U+0000..U+00FF]的信息，包括：
+            -0x80位，如果set表示“为空白”
+            -0x40位，如果set表示“是大写字母”
+            -0x20位，如果set表示“是小写字母”
+            -最下面的5位是字符的UnicodeCategory
+         */
         private static ReadOnlySpan<byte> Latin1CharInfo => new byte[]
         {
         //  0     1     2     3     4     5     6     7     8     9     A     B     C     D     E     F
@@ -77,6 +84,7 @@ namespace System
         };
 
         // Return true for all characters below or equal U+00ff, which is ASCII + Latin-1 Supplement.
+        //对于低于或等于U+00ff的所有字符返回true，这是ASCII+Latin-1补充
         private static bool IsLatin1(char c) => (uint)c < (uint)Latin1CharInfo.Length;
 
         // Return true for all characters below or equal U+007f, which is ASCII.
@@ -365,7 +373,8 @@ namespace System
 
         /*===============================IsWhiteSpace===================================
         **A wrapper for char.  Returns a boolean indicating whether    **
-        **character c is considered to be a whitespace character.                     **
+        **character c is considered to be a whitespace character.    
+        **char的包装器。返回一个布尔值，指示是否字符c被认为是空白字符**
         ==============================================================================*/
         // Determines whether a character is whitespace.
         public static bool IsWhiteSpace(char c)

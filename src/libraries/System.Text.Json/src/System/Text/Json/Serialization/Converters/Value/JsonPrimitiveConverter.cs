@@ -7,6 +7,7 @@ namespace System.Text.Json.Serialization.Converters
 {
     /// <summary>
     /// Inherited by built-in converters serializing types as JSON primitives that support property name serialization.
+    /// 由内置转换器继承，将类型序列化为支持属性名序列化的JSON原语。
     /// </summary>
     internal abstract class JsonPrimitiveConverter<T> : JsonConverter<T>
     {

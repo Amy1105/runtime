@@ -10,6 +10,7 @@ namespace System.Text.Json.Serialization
     {
         /// <summary>
         /// Initializes the state for polymorphic cases and returns the appropriate derived converter.
+        /// 初始化多态情况的状态，并返回相应的派生转换器。
         /// </summary>
         internal JsonConverter? ResolvePolymorphicConverter(JsonTypeInfo jsonTypeInfo, ref ReadStack state)
         {

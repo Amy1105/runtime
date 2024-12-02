@@ -249,6 +249,7 @@ namespace Microsoft.Extensions.Hosting
         }
 
         // Lazily allocate HostBuilderAdapter so the allocations can be avoided if there's nothing observing the events.
+        //懒惰地分配HostBuilderAdapter，这样如果没有任何东西观察到事件，就可以避免分配
         internal IHostBuilder AsHostBuilder() => _hostBuilderAdapter ??= new HostBuilderAdapter(this);
 
         private sealed class HostBuilderAdapter : IHostBuilder

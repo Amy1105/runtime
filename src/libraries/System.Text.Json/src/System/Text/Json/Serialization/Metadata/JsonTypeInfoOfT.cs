@@ -24,8 +24,10 @@ namespace System.Text.Json.Serialization.Metadata
 
         /// <summary>
         /// A Converter whose declared type always matches that of the current JsonTypeInfo.
+        /// 一种转换器，其声明的类型始终与当前JsonTypeInfo的类型匹配。
         /// It might be the same instance as JsonTypeInfo.Converter or it could be wrapped
         /// in a CastingConverter in cases where a polymorphic converter is being used.
+        /// 它可能与JsonTypeInfo是同一个实例。转换器，或者在使用多态转换器的情况下，可以将其包裹在CastingConverter中。
         /// </summary>
         internal JsonConverter<T> EffectiveConverter { get; }
 

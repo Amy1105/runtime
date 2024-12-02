@@ -9,6 +9,7 @@ namespace System.Text.Json.Serialization.Converters
 {
     /// <summary>
     /// Converter wrapper which casts SourceType into TargetType
+    /// 将SourceType转换为TargetType的转换器包装器
     /// </summary>
     internal sealed class CastingConverter<T> : JsonConverter<T>
     {

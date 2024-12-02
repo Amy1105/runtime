@@ -13,6 +13,7 @@ namespace System.Text.Json.Serialization
     {
         /// <summary>
         /// Perform a Read() and if read-ahead is required, also read-ahead (to the end of the current JSON level).
+        /// 执行Read（），如果需要预读，也要预读（到当前JSON级别的末尾）。
         /// </summary>
         // AggressiveInlining used since this method is on a hot path and short. The optionally called
         // method DoSingleValueReadWithReadAhead is not inlined.

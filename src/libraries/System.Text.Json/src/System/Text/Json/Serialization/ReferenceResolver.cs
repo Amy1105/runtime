@@ -5,7 +5,9 @@ namespace System.Text.Json.Serialization
 {
     /// <summary>
     /// This class defines how the <see cref="JsonSerializer"/> deals with references on serialization and deserialization.
+    /// 此类定义了<see-cref=“JsonSerializer”/>如何处理序列化和反序列化的引用。
     /// Defines the core behavior of preserving references on serialization and deserialization.
+    /// 定义在序列化和反序列化时保留引用的核心行为。
     /// </summary>
     public abstract class ReferenceResolver
     {

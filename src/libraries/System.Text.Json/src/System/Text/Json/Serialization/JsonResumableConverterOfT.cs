@@ -7,7 +7,9 @@ namespace System.Text.Json.Serialization
 {
     /// <summary>
     /// Base class for converters that are able to resume after reading or writing to a buffer.
+    /// 转换器的基类，能够在读取或写入缓冲区后恢复。
     /// This is used when the Stream-based serialization APIs are used.
+    /// 这在使用基于流的序列化API时使用。
     /// </summary>
     /// <typeparam name="T"></typeparam>
     internal abstract class JsonResumableConverter<T> : JsonConverter<T>

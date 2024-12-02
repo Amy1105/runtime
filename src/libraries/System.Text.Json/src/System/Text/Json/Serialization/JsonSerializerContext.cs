@@ -8,6 +8,7 @@ namespace System.Text.Json.Serialization
 {
     /// <summary>
     /// Provides metadata about a set of types that is relevant to JSON serialization.
+    /// 提供与JSON序列化相关的一组类型的元数据。
     /// </summary>
     public abstract partial class JsonSerializerContext : IJsonTypeInfoResolver, IBuiltInJsonTypeInfoResolver
     {
@@ -79,6 +80,7 @@ namespace System.Text.Json.Serialization
 
         /// <summary>
         /// The default run time options for the context. Its values are defined at design-time via <see cref="JsonSourceGenerationOptionsAttribute"/>.
+        ///上下文的默认运行时选项。其值在设计时通过<see cref=“JsonSourceGenerationOptionsAttribute”/>定义。
         /// </summary>
         protected abstract JsonSerializerOptions? GeneratedSerializerOptions { get; }
 

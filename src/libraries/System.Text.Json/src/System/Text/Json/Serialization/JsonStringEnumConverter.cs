@@ -8,11 +8,14 @@ namespace System.Text.Json.Serialization
 {
     /// <summary>
     /// Converter to convert enums to and from strings.
+    /// 转换器，用于将枚举转换为字符串或从字符串转换枚举。
     /// </summary>
     /// <remarks>
     /// Reading is case insensitive, writing can be customized via a <see cref="JsonNamingPolicy" />.
+    /// 读取不区分大小写，写入可以通过<see cref=“JsonNamingPolicy”/>进行自定义。
     /// </remarks>
     /// <typeparam name="TEnum">The enum type that this converter targets.</typeparam>
+    /// 此转换器所针对的枚举类型。
     public class JsonStringEnumConverter<TEnum> : JsonConverterFactory
         where TEnum : struct, Enum
     {
@@ -63,6 +66,7 @@ namespace System.Text.Json.Serialization
 
     /// <summary>
     /// Converter to convert enums to and from strings.
+    /// 转换器，用于将枚举转换为字符串或从字符串转换枚举。
     /// </summary>
     /// <remarks>
     /// Reading is case insensitive, writing can be customized via a <see cref="JsonNamingPolicy" />.

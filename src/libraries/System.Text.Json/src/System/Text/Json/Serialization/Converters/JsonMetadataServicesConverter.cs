@@ -8,6 +8,7 @@ namespace System.Text.Json.Serialization.Converters
 {
     /// <summary>
     /// Provides a mechanism to invoke "fast-path" serialization logic via
+    /// 提供了一种通过以下方式调用“快速路径”序列化逻辑的机制
     /// <see cref="JsonTypeInfo{T}.SerializeHandler"/>. This type holds an optional
     /// reference to an actual <see cref="JsonConverter{T}"/> for the type
     /// <typeparamref name="T"/>, to provide a fallback when the fast path cannot be used.

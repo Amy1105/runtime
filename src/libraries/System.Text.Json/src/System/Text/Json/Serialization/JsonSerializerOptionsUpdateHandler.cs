@@ -14,7 +14,9 @@ using System.Text.Json.Serialization.Metadata;
 
 namespace System.Text.Json
 {
-    /// <summary>Handler used to clear JsonSerializerOptions reflection cache upon a metadata update.</summary>
+    /// <summary>Handler used to clear JsonSerializerOptions reflection cache upon a metadata update.
+    /// 用于在元数据更新时清除JsonSerializerOptions反射缓存的处理程序。
+    /// </summary>
     internal static class JsonSerializerOptionsUpdateHandler
     {
         public static void ClearCache(Type[]? types)

@@ -8,11 +8,13 @@ namespace System.Text.Json.Serialization.Converters
     {
         /// <summary>
         /// Allow string values.
+        /// 允许字符串值。
         /// </summary>
         AllowStrings = 0b0001,
 
         /// <summary>
         /// Allow number values.
+        /// 允许数字值
         /// </summary>
         AllowNumbers = 0b0010
     }
