@@ -14,7 +14,7 @@ namespace Microsoft.Extensions.Configuration
     public abstract class FileConfigurationSource : IConfigurationSource
     {
         /// <summary>
-        /// Used to access the contents of the file.
+        /// 用于访问文件的内容。
         /// </summary>
         public IFileProvider? FileProvider { get; set; }
 
@@ -35,18 +35,18 @@ namespace Microsoft.Extensions.Configuration
         public bool Optional { get; set; }
 
         /// <summary>
-        /// Determines whether the source will be loaded if the underlying file changes.
+        /// 确定在基础文件更改时是否加载源。
         /// </summary>
         public bool ReloadOnChange { get; set; }
 
         /// <summary>
-        /// Number of milliseconds that reload will wait before calling Load.  This helps
-        /// avoid triggering reload before a file is completely written. Default is 250.
+        /// 调用Load之前重新加载将等待的毫秒数。 
+        /// 这有助于避免在文件完全写入之前触发重新加载。默认值为250。
         /// </summary>
         public int ReloadDelay { get; set; } = 250;
 
         /// <summary>
-        /// Will be called if an uncaught exception occurs in FileConfigurationProvider.Load.
+        /// 如果FileConfigurationProvider中发生未捕获的异常，将被调用。加载。
         /// </summary>
         public Action<FileLoadExceptionContext>? OnLoadException { get; set; }
 
@@ -59,6 +59,7 @@ namespace Microsoft.Extensions.Configuration
 
         /// <summary>
         /// Called to use any default settings on the builder like the FileProvider or FileLoadExceptionHandler.
+        /// 调用以使用构建器上的任何默认设置，如FileProvider或FileLoadExceptionHandler
         /// </summary>
         /// <param name="builder">The <see cref="IConfigurationBuilder"/>.</param>
         public void EnsureDefaults(IConfigurationBuilder builder)
@@ -73,8 +74,8 @@ namespace Microsoft.Extensions.Configuration
         }
 
         /// <summary>
-        /// If no file provider has been set, for absolute Path, this will creates a physical file provider
-        /// for the nearest existing directory.
+        /// If no file provider has been set, for absolute Path, this will creates a physical file provider  for the nearest existing directory.
+        /// 如果没有设置文件提供程序，对于绝对路径，这将为最近的现有目录创建一个物理文件提供程序
         /// </summary>
         public void ResolveFileProvider()
         {

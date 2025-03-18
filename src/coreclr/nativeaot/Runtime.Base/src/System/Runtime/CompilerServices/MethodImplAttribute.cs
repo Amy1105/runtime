@@ -7,6 +7,7 @@ namespace System.Runtime.CompilerServices
 {
     // This Enum matches the miImpl flags defined in corhdr.h. It is used to specify
     // certain method properties.
+    //InternalCall:这通常意味着该方法是由 .NET 基类库的非托管C++代码实现的，并且在托管的中间语言(IL)中不存在该方法的实现
     public enum MethodImplOptions
     {
         Unmanaged = 0x0004,

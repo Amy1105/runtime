@@ -22,6 +22,7 @@ namespace Microsoft.Extensions.Configuration
 
         /// <summary>
         /// Initializes a Configuration root with a list of providers.
+        /// 使用提供程序列表初始化配置根。
         /// </summary>
         /// <param name="providers">The <see cref="IConfigurationProvider"/>s for this configuration.</param>
         public ConfigurationRoot(IList<IConfigurationProvider> providers)
