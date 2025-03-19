@@ -4,14 +4,15 @@
 namespace System.ComponentModel
 {
     /// <summary>
-    /// Provides the default implementation for the <see cref='System.ComponentModel.IComponent'/>
-    /// interface and enables object-sharing between applications.
+    /// Provides the default implementation for the <see cref='System.ComponentModel.IComponent'/> interface and enables object-sharing between applications.
+    /// 为<see cref='System.ComponentModel.IComponent'/>提高默认实现，并支持应用程序之间的对象共享。
     /// </summary>
     [DesignerCategory("Component")]
     public class Component : MarshalByRefObject, IComponent
     {
         /// <summary>
         /// Static hash key for the Disposed event. This field is read-only.
+        /// Disposed事件的静态哈希键。此字段是只读的。
         /// </summary>
         private static readonly object s_eventDisposed = new object();
 
@@ -33,13 +34,14 @@ namespace System.ComponentModel
         protected virtual bool CanRaiseEvents => true;
 
         /// <summary>
-        /// Internal API that allows the event handler list class to access the
-        /// CanRaiseEvents property.
+        /// Internal API that allows the event handler list class to access the CanRaiseEvents property.
+        /// 允许事件处理程序列表类访问CanRaiseEvents属性的内部API。
         /// </summary>
         internal bool CanRaiseEventsInternal => CanRaiseEvents;
 
         /// <summary>
         /// Adds an event handler to listen to the Disposed event on the component.
+        /// 添加一个事件处理程序来监听组件上的“已处理”事件。
         /// </summary>
         [Browsable(false)]
         [EditorBrowsable(EditorBrowsableState.Advanced)]
@@ -51,6 +53,7 @@ namespace System.ComponentModel
 
         /// <summary>
         /// Gets the list of event handlers that are attached to this component.
+        /// 获取附加到此组件的事件处理程序的列表。
         /// </summary>
         protected EventHandlerList Events => _events ??= new EventHandlerList(this);
 

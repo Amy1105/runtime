@@ -5,6 +5,7 @@ namespace System.ComponentModel
 {
     /// <summary>
     /// Provides a simple list of delegates. This class cannot be inherited.
+    /// 提供一个简单的代理列表。这个类不能被继承。
     /// </summary>
     public sealed class EventHandlerList : IDisposable
     {
@@ -12,8 +13,8 @@ namespace System.ComponentModel
         private readonly Component? _parent;
 
         /// <summary>
-        /// Creates a new event handler list. The parent component is used to check the
-        /// component's CanRaiseEvents property.
+        /// Creates a new event handler list. The parent component is used to check the component's CanRaiseEvents property.
+        /// 创建新的事件处理程序列表。父组件用于检查组件的CanRaiseEvents属性。
         /// </summary>
         internal EventHandlerList(Component parent)
         {
@@ -22,6 +23,7 @@ namespace System.ComponentModel
 
         /// <summary>
         /// Creates a new event handler list.
+        /// 创建新的事件处理程序列表。
         /// </summary>
         public EventHandlerList()
         {
@@ -29,6 +31,7 @@ namespace System.ComponentModel
 
         /// <summary>
         /// Gets or sets the delegate for the specified key.
+        /// 获取或设置指定键的委托。
         /// </summary>
         public Delegate? this[object key]
         {

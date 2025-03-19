@@ -40,6 +40,7 @@ namespace Microsoft.Extensions.Configuration
 
         /// <summary>
         /// Gets the key this section occupies in its parent.
+        /// 获取此节在其父节中占用的键。
         /// </summary>
         public string Key =>
             // Key is calculated lazily as last portion of Path
