@@ -14,6 +14,9 @@ namespace System.IO
     // Note: This class has an OS Limitation where the inotify API can miss events if a directory is created and immediately has
     //       changes underneath. This is due to the inotify* APIs not being recursive and needing to call inotify_add_watch on
     //       each subdirectory, causing a race between adding the watch and file system events happening.
+    /// <summary>
+    /// 注意：此类具有操作系统限制，如果创建了目录并立即下面的变化。这是由于inotify* API不是递归的，需要在上调用inotify_add_watch每个子目录，导致添加监视和文件系统事件之间发生竞争。
+    /// </summary>
     public partial class FileSystemWatcher
     {
         /// <summary>Starts a new watch operation if one is not currently running.</summary>
