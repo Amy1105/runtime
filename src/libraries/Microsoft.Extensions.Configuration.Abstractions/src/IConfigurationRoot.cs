@@ -7,6 +7,7 @@ namespace Microsoft.Extensions.Configuration
 {
     /// <summary>
     /// Represents the root of an <see cref="IConfiguration"/> hierarchy.
+    /// 表示 <see cref="IConfiguration"/> 层次结构的根。
     /// </summary>
     public interface IConfigurationRoot : IConfiguration
     {

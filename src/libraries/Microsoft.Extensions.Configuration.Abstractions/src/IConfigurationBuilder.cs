@@ -7,6 +7,7 @@ namespace Microsoft.Extensions.Configuration
 {
     /// <summary>
     /// Represents a type used to build application configuration.
+    /// 表示用于构建应用程序配置的类型
     /// </summary>
     public interface IConfigurationBuilder
     {

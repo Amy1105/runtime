@@ -16,6 +16,7 @@ namespace Microsoft.Extensions.Hosting
 {
     /// <summary>
     /// Represents a hosted applications and services builder which helps manage configuration, logging, lifetime, and more.
+    /// 表示一个托管的应用程序和服务构建器，它有助于管理配置、日志记录、生命周期等。
     /// </summary>
     public sealed class HostApplicationBuilder : IHostApplicationBuilder
     {
@@ -83,6 +84,7 @@ namespace Microsoft.Extensions.Hosting
         /// <param name="settings">Settings controlling initial configuration and whether default settings should be used.</param>
         public HostApplicationBuilder(HostApplicationBuilderSettings? settings)
         {
+            //接收传入的参数
             settings ??= new HostApplicationBuilderSettings();
             Configuration = settings.Configuration ?? new ConfigurationManager();
 
@@ -102,14 +104,17 @@ namespace Microsoft.Extensions.Hosting
             if (!settings.DisableDefaults)
             {
                 HostingHostBuilderExtensions.ApplyDefaultAppConfiguration(_hostBuilderContext, Configuration, settings.Args);
+                //添加默认服务service
                 HostingHostBuilderExtensions.AddDefaultServices(_hostBuilderContext, Services);
+
                 serviceProviderOptions = HostingHostBuilderExtensions.CreateDefaultServiceProviderOptions(_hostBuilderContext);
             }
 
             _createServiceProvider = () =>
             {
-                // Call _configureContainer in case anyone adds callbacks via HostBuilderAdapter.ConfigureContainer<IServiceCollection>() during build.
-                // Otherwise, this no-ops.
+                // 如果有人通过HostBuilderAdapter添加回调，请调用_configureContainer。在生成过程中配置容器<IServiceCollection>（）。
+                // 否则，就没有行动了。
+                // Call _configureContainer in case anyone adds callbacks via HostBuilderAdapter.ConfigureContainer<IServiceCollection>() during build. Otherwise, this no-ops.
                 _configureContainer(Services);
                 return serviceProviderOptions is null ? Services.BuildServiceProvider() : Services.BuildServiceProvider(serviceProviderOptions);
             };
@@ -286,6 +291,7 @@ namespace Microsoft.Extensions.Hosting
 
                     // Disallow changing any host settings this late in the cycle. The reasoning is that we've already loaded the default configuration
                     // and done other things based on environment name, application name or content root.
+                    // 不允许在周期的后期更改任何主机设置。原因是，我们已经加载了默认配置，并根据环境名称、应用程序名称或内容根做了其他事情。
                     if (!string.Equals(previousApplicationName, config[HostDefaults.ApplicationKey], StringComparison.OrdinalIgnoreCase))
                     {
                         throw new NotSupportedException(SR.Format(SR.ApplicationNameChangeNotSupported, previousApplicationName, config[HostDefaults.ApplicationKey]));

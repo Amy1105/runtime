@@ -4,8 +4,8 @@
 namespace Microsoft.Extensions.DependencyInjection
 {
     /// <summary>
-    /// A factory for creating instances of <see cref="IServiceScope"/>, which is used to create
-    /// services within a scope.
+    /// A factory for creating instances of <see cref="IServiceScope"/>, which is used to create services within a scope.
+    /// 创建<see cref="IServiceScope"/>实例的工厂，用于在作用域内创建服务。
     /// </summary>
     public interface IServiceScopeFactory
     {

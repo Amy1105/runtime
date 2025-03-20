@@ -18,6 +18,7 @@ namespace Microsoft.Extensions.Hosting
 {
     /// <summary>
     /// A program initialization utility.
+    /// 程序初始化实用程序
     /// </summary>
     public partial class HostBuilder : IHostBuilder
     {
@@ -315,7 +316,9 @@ namespace Microsoft.Extensions.Hosting
             services.AddSingleton<IHost>(_ =>
             {
                 // We use serviceProviderGetter() instead of the _ parameter because these can be different given a custom IServiceProviderFactory.
+                // 我们使用serviceProviderGetter（）而不是_参数，因为给定自定义IServiceProviderFactory，这些参数可能会有所不同。
                 // We want the host to always dispose the IServiceProvider returned by the IServiceProviderFactory.
+                // 我们希望主机始终处理IServiceProviderFactory返回的IServiceProvider。
                 // https://github.com/dotnet/runtime/issues/36060
                 IServiceProvider appServices = serviceProviderGetter();
                 return new Internal.Host(appServices,
@@ -366,8 +369,8 @@ namespace Microsoft.Extensions.Hosting
                 throw new InvalidOperationException(SR.NullIServiceProvider);
             }
 
-            // resolve configuration explicitly once to mark it as resolved within the
-            // service provider, ensuring it will be properly disposed with the provider
+            // resolve configuration explicitly once to mark it as resolved within the service provider, ensuring it will be properly disposed with the provider
+            // 明确解析配置一次，将其标记为在服务提供商内已解析，确保它将与提供商一起正确处理
             _ = serviceProvider.GetService<IConfiguration>();
 
             var host = serviceProvider.GetRequiredService<IHost>();

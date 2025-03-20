@@ -17,9 +17,9 @@ namespace Microsoft.Extensions.DependencyInjection
         /// specified <see cref="IServiceCollection"/>.
         /// </summary>
         /// <param name="services">The <see cref="IServiceCollection"/> to add the service to.</param>
-        /// <param name="serviceType">The type of the service to register.</param>
-        /// <param name="implementationType">The implementation type of the service.</param>
-        /// <returns>A reference to this instance after the operation has completed.</returns>
+        /// <param name="serviceType">要注册的服务类型.</param>
+        /// <param name="implementationType">服务的实现类型.</param>
+        /// <returns>操作完成后对此实例的引用。</returns>
         /// <seealso cref="ServiceLifetime.Transient"/>
         public static IServiceCollection AddTransient(
             this IServiceCollection services,

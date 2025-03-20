@@ -7,10 +7,12 @@ namespace Microsoft.Extensions.DependencyInjection
 {
     /// <summary>
     /// Options for configuring various behaviors of the default <see cref="IServiceProvider"/> implementation.
+    /// 用于配置默认<see cref="IServiceProvider"/>实现的各种行为的选项。
     /// </summary>
     public class ServiceProviderOptions
     {
         // Avoid allocating objects in the default case
+        // 避免在默认情况下分配对象
         internal static readonly ServiceProviderOptions Default = new ServiceProviderOptions();
 
         /// <summary>

@@ -9,14 +9,17 @@ namespace Microsoft.Extensions.Hosting
 {
     /// <summary>
     /// Provides convenience methods for creating instances of <see cref="IHostBuilder"/> with pre-configured defaults.
+    /// 提供创建具有预配置默认值的<see cref="IHostBuilder"/> 实例的便利方法。
     /// </summary>
     public static class Host
     {
         /// <summary>
         /// Initializes a new instance of the <see cref="HostBuilder"/> class with pre-configured defaults.
+        /// 使用预配置的默认值初始化 <see cref="HostBuilder"/> 类的新实例。
         /// </summary>
         /// <remarks>
         ///   The following defaults are applied to the returned <see cref="HostBuilder"/>:
+        ///   以下默认值应用于返回的<see cref="HostBuilder"/>:
         ///   <list type="bullet">
         ///     <item><description>set the <see cref="IHostEnvironment.ContentRootPath"/> to the result of <see cref="Directory.GetCurrentDirectory()"/></description></item>
         ///     <item><description>load host <see cref="IConfiguration"/> from "DOTNET_" prefixed environment variables</description></item>

@@ -12,6 +12,7 @@ namespace Microsoft.Extensions.Hosting;
 
 /// <summary>
 /// Represents a hosted applications and services builder which helps manage configuration, logging, lifetime, and more.
+/// 表示一个托管的应用程序和服务构建器，它有助于管理配置、日志记录、生命周期等
 /// </summary>
 public interface IHostApplicationBuilder
 {

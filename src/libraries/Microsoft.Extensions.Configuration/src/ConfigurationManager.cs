@@ -46,6 +46,7 @@ namespace Microsoft.Extensions.Configuration
             _properties = new ConfigurationBuilderProperties(this);
 
             // Make sure there's some default storage since there are no default providers.
+            // 确保有一些默认存储，因为没有默认提供程序
             _sources.Add(new MemoryConfigurationSource());
         }
 

@@ -9,6 +9,7 @@ namespace Microsoft.Extensions.Hosting
 {
     /// <summary>
     /// A program abstraction.
+    /// ³ÌÐò³éÏó
     /// </summary>
     public interface IHost : IDisposable
     {

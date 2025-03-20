@@ -20,6 +20,7 @@ using Microsoft.Extensions.Logging.EventLog;
 namespace Microsoft.Extensions.Hosting
 {
     /// <summary>
+    /// 为宿主包中的<see cref="IHostBuilder"/> 提供扩展方法。
     /// Provides extension methods for the <see cref="IHostBuilder"/> from the hosting package.
     /// </summary>
     public static class HostingHostBuilderExtensions

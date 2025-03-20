@@ -11,6 +11,7 @@ namespace Microsoft.Extensions.Configuration
 {
     /// <summary>
     /// The root node for a configuration.
+    /// 配置的根节点。
     /// </summary>
     [DebuggerDisplay("{DebuggerToString(),nq}")]
     [DebuggerTypeProxy(typeof(ConfigurationRootDebugView))]

@@ -12,7 +12,7 @@ using System.Text;
 namespace Microsoft.Extensions.Primitives
 {
     /// <summary>
-    /// Represents zero/null, one, or many strings in an efficient way.
+    /// 以有效的方式表示零/null、一个或多个字符串。
     /// </summary>
     [DebuggerDisplay("{ToString()}")]
     [DebuggerTypeProxy(typeof(StringValuesDebugView))]

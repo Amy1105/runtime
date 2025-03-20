@@ -7,6 +7,7 @@ namespace Microsoft.Extensions.DependencyInjection
 {
     /// <summary>
     /// Provides an extension point for creating a container specific builder and an <see cref="IServiceProvider"/>.
+    /// 提供一个扩展点，用于创建特定于容器的构建器和<see cref="IServiceProvider"/>>。
     /// </summary>
     public interface IServiceProviderFactory<TContainerBuilder> where TContainerBuilder : notnull
     {
