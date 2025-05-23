@@ -11,8 +11,9 @@ namespace System.Collections.Concurrent
 {
     /// <summary>
     /// Represents a thread-safe, unordered collection of objects.
+    /// 表示一个线程安全、无序的对象集合。
     /// </summary>
-    /// <typeparam name="T">Specifies the type of elements in the bag.</typeparam>
+    /// <typeparam name="T">指定包中元素的类型.</typeparam>
     /// <remarks>
     /// <para>
     /// Bags are useful for storing objects when ordering doesn't matter, and unlike sets, bags support

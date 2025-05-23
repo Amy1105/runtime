@@ -15,6 +15,7 @@ namespace System.Text.Json.Serialization.Metadata
         // of values corresponding according to the current JsonTypeInfo configuration.
 
         // Root serialization method for sync, non-streaming serialization
+        // 同步的根序列化方法，非流式序列化
         internal void Serialize(
             Utf8JsonWriter writer,
             in T? rootValue,

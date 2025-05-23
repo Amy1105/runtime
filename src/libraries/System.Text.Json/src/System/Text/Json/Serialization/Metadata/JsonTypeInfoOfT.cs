@@ -102,8 +102,8 @@ namespace System.Text.Json.Serialization.Metadata
         }
 
         /// <summary>
-        /// Serializes an instance of <typeparamref name="T"/> using
-        /// <see cref="JsonSourceGenerationOptionsAttribute"/> values specified at design time.
+        /// Serializes an instance of <typeparamref name="T"/> using <see cref="JsonSourceGenerationOptionsAttribute"/> values specified at design time.
+        /// 使用在设计时指定的<see cref="JsonSourceGenerationOptionsAttribute"/>值对<typeparamref name="T"/>的实例进行序列化。
         /// </summary>
         /// <remarks>The writer is not flushed after writing.</remarks>
         [EditorBrowsable(EditorBrowsableState.Never)]

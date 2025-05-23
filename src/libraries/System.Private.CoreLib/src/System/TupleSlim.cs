@@ -3,7 +3,8 @@
 
 namespace System
 {
-    /// <summary>Simple alternative to <see cref="Tuple{T1, T2}"/> for use in corelib.</summary>
+    /// <summary>Simple alternative to <see cref="Tuple{T1, T2}"/> for use in corelib.
+    /// 在corelib中使用<see cref="Tuple{T1, T2}"/>的简单替代方案</summary>
     /// <remarks>Exists to avoid the unnecessary size increase that may come from Tuple's additional surface area.</remarks>
     internal sealed class TupleSlim<T1, T2>
     {

@@ -582,6 +582,7 @@ namespace System
         }
 
         /// <summary>
+        /// 将指定的<see cref="decimal"/>实例的值转换为等效的二进制表示形式。
         /// Converts the value of a specified instance of <see cref="decimal"/> to its equivalent binary representation.
         /// </summary>
         /// <param name="d">The value to convert.</param>

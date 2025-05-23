@@ -10,6 +10,7 @@ namespace System.Text.Json.Serialization
 {
     /// <summary>
     /// Converts an object or value to or from JSON.
+    /// 将对象或值转换为JSON或从JSON转换。
     /// </summary>
     /// <typeparam name="T">The <see cref="System.Type"/> to convert.</typeparam>
     public abstract partial class JsonConverter<T> : JsonConverter
@@ -564,7 +565,7 @@ namespace System.Text.Json.Serialization
         }
 
         /// <summary>
-        /// Write the value as JSON.
+        /// Write the value as JSON.将值写成JSON。
         /// </summary>
         /// <remarks>
         /// A converter may throw any Exception, but should throw <cref>JsonException</cref> when the JSON

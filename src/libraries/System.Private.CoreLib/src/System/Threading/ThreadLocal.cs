@@ -13,6 +13,7 @@ namespace System.Threading
 {
     /// <summary>
     /// Provides thread-local storage of data.
+    /// 给数据提供本地线程存储。
     /// </summary>
     /// <typeparam name="T">Specifies the type of data stored per-thread.</typeparam>
     /// <remarks>

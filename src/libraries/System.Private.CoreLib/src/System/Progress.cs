@@ -8,6 +8,7 @@ namespace System
 {
     /// <summary>
     /// Provides an IProgress{T} that invokes callbacks for each reported progress value.
+    /// 提供一个IProgress｛T｝，它为每个报告的进度值调用回调
     /// </summary>
     /// <typeparam name="T">Specifies the type of the progress report value.</typeparam>
     /// <remarks>

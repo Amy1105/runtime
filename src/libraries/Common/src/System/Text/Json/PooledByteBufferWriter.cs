@@ -11,6 +11,10 @@ using System.Threading.Tasks;
 
 namespace System.Text.Json
 {
+    /// <summary>
+    /// 此类允许两种可能的配置：如果rentedBuffer不为null，则它可以用作IBufferWriter，并保存一个最终应返回共享池的缓冲区。
+    /// 如果rentedBuffer为null，则实例处于已清除/已处置状态，必须重新租用缓冲区才能再次使用。
+    /// </summary>
     internal sealed class PooledByteBufferWriter : IBufferWriter<byte>, IDisposable
     {
         // This class allows two possible configurations: if rentedBuffer is not null then

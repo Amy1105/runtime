@@ -16,6 +16,7 @@ namespace System.Text.Json
 {
     /// <summary>
     /// Provides a high-performance API for forward-only, non-cached writing of UTF-8 encoded JSON text.
+    /// 提供了一个高性能的API，用于对UTF-8编码的JSON文本进行非缓存的正向写入。
     /// </summary>
     /// <remarks>
     ///   <para>
@@ -282,6 +283,7 @@ namespace System.Text.Json
 
         /// <summary>
         /// Commits the JSON text written so far which makes it visible to the output destination.
+        /// 提交到目前为止编写的JSON文本，使其对输出目标可见。
         /// </summary>
         /// <remarks>
         /// In the case of IBufferWriter, this advances the underlying <see cref="IBufferWriter{Byte}" /> based on what has been written so far.

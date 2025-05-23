@@ -93,6 +93,7 @@ namespace System.Text.Json
 
         /// <summary>
         /// Converts the provided value into a <see cref="string"/>.
+        /// 将提供的值转换为<see cref="string"/>
         /// </summary>
         /// <returns>A <see cref="string"/> representation of the value.</returns>
         /// <param name="value">The value to convert.</param>

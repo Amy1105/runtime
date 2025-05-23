@@ -11,7 +11,7 @@ namespace System.Text.Json
     /// </summary>
     internal static class Utf8JsonWriterCache
     {
-        [ThreadStatic]  //表示静态字段的值对于每个线程都是唯一的。
+        [ThreadStatic]  //表示静态字段t_threadLocalState的值对于每个线程都是唯一的。
         private static ThreadLocalState? t_threadLocalState;
 
         public static Utf8JsonWriter RentWriterAndBuffer(JsonSerializerOptions options, out PooledByteBufferWriter bufferWriter)

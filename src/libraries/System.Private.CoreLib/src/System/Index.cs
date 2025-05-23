@@ -7,7 +7,8 @@ using System.Runtime.CompilerServices;
 
 namespace System
 {
-    /// <summary>Represent a type can be used to index a collection either from the start or the end.</summary>
+    /// <summary>Represent a type can be used to index a collection either from the start or the end.
+    /// 表示类型可用于从开始或结束对集合进行索引。</summary>
     /// <remarks>
     /// Index is used by the C# compiler to support the new index syntax
     /// <code>
