@@ -15,6 +15,9 @@ using System.Net.Http.Metrics;
 
 namespace System.Net.Http
 {
+    /// <summary>
+    /// 提供 .NET Core 2.1 及更高版本中 HttpClient 使用的默认消息处理程序。
+    /// </summary>
     [UnsupportedOSPlatform("browser")]
     public sealed class SocketsHttpHandler : HttpMessageHandler
     {

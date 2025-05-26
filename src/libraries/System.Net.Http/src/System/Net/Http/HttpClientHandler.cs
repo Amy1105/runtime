@@ -20,6 +20,9 @@ using HttpHandlerType = System.Net.Http.SocketsHttpHandler;
 
 namespace System.Net.Http
 {
+    /// <summary>
+    /// .NET Framework 和 .NET Core 2.0 及更低版本中由 HttpClient 使用的默认消息处理程序
+    /// </summary>
     public partial class HttpClientHandler : HttpMessageHandler
     {
         private readonly HttpHandlerType _underlyingHandler;

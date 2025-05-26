@@ -12,6 +12,7 @@ namespace Microsoft.Extensions.Http.Logging
 {
     /// <summary>
     /// Handles logging of the lifecycle for an HTTP request.
+    /// 处理HTTP请求生命周期的日志记录。
     /// </summary>
     public class LoggingHttpMessageHandler : DelegatingHandler
     {

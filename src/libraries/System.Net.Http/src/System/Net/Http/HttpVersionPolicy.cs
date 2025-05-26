@@ -5,11 +5,13 @@ namespace System.Net.Http
 {
     /// <summary>
     /// Determines behavior when selecting and negotiating HTTP version for a request.
+    /// 确定为请求选择和协商HTTP版本时的行为
     /// </summary>
     public enum HttpVersionPolicy
     {
         /// <summary>
         /// Default behavior, either uses requested version or downgrades to a lower one.
+        /// 默认行为，要么使用请求的版本，要么降级到较低的版本。
         /// </summary>
         /// <remarks>
         /// If the server supports the requested version, either negotiated via ALPN (H2) or advertised via Alt-Svc (H3),

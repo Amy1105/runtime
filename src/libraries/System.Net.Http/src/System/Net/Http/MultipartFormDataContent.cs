@@ -9,7 +9,7 @@ using System.Threading.Tasks;
 
 namespace System.Net.Http
 {
-    public class MultipartFormDataContent : MultipartContent
+    public class MultipartFormDataContent : MultipartContent  
     {
         private const string formData = "form-data";
 
