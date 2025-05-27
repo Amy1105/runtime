@@ -112,6 +112,7 @@ namespace System.Text.Json.SourceGeneration.Tests
         [JsonSerializable(typeof(SimpleClassWithParameterizedCtor_Derived_GenericIDictionary_ObjectExt))]
         [JsonSerializable(typeof(Point_MembersHave_JsonInclude))]
         [JsonSerializable(typeof(ClassWithFiveArgs_MembersHave_JsonNumberHandlingAttributes))]
+        [JsonSerializable(typeof(Class_With_Parameters_Default_Values))]
         [JsonSerializable(typeof(Point_MembersHave_JsonPropertyName))]
         [JsonSerializable(typeof(Point_MembersHave_JsonConverter))]
         [JsonSerializable(typeof(Point_MembersHave_JsonIgnore))]
@@ -153,6 +154,7 @@ namespace System.Text.Json.SourceGeneration.Tests
         [JsonSerializable(typeof(TypeWithEnumParameters))]
         [JsonSerializable(typeof(ClassWithIgnoredPropertyDefaultParam))]
         [JsonSerializable(typeof(ClassWithCustomConverterOnCtorParameter))]
+        [JsonSerializable(typeof(ClassWithConflictingCaseInsensitiveProperties))]
         internal sealed partial class ConstructorTestsContext_Metadata : JsonSerializerContext
         {
         }
@@ -260,6 +262,7 @@ namespace System.Text.Json.SourceGeneration.Tests
         [JsonSerializable(typeof(SimpleClassWithParameterizedCtor_Derived_GenericIDictionary_ObjectExt))]
         [JsonSerializable(typeof(Point_MembersHave_JsonInclude))]
         [JsonSerializable(typeof(ClassWithFiveArgs_MembersHave_JsonNumberHandlingAttributes))]
+        [JsonSerializable(typeof(Class_With_Parameters_Default_Values))]
         [JsonSerializable(typeof(Point_MembersHave_JsonPropertyName))]
         [JsonSerializable(typeof(Point_MembersHave_JsonConverter))]
         [JsonSerializable(typeof(Point_MembersHave_JsonIgnore))]
@@ -301,6 +304,7 @@ namespace System.Text.Json.SourceGeneration.Tests
         [JsonSerializable(typeof(TypeWithEnumParameters))]
         [JsonSerializable(typeof(ClassWithIgnoredPropertyDefaultParam))]
         [JsonSerializable(typeof(ClassWithCustomConverterOnCtorParameter))]
+        [JsonSerializable(typeof(ClassWithConflictingCaseInsensitiveProperties))]
         internal sealed partial class ConstructorTestsContext_Default : JsonSerializerContext
         {
         }

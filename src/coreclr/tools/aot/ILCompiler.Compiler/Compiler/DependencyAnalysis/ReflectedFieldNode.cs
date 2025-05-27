@@ -43,6 +43,10 @@ namespace ILCompiler.DependencyAnalysis
                 return dependencies;
             }
 
+            // readonly static fields are not reflection settable, the rest are
+            if (!_field.IsInitOnly || !_field.IsStatic)
+                dependencies.Add(factory.NotReadOnlyField(_field), "Reflection writable field");
+
             FieldDesc typicalField = _field.GetTypicalFieldDefinition();
             if (typicalField != _field)
             {
@@ -93,7 +97,7 @@ namespace ILCompiler.DependencyAnalysis
             }
 
             TypeDesc fieldType = _field.FieldType.NormalizeInstantiation();
-            ReflectionInvokeMapNode.AddSignatureDependency(ref dependencies, factory, fieldType, "Type of the field");
+            ReflectionInvokeMapNode.AddSignatureDependency(ref dependencies, factory, _field, fieldType, "Type of the field", isOut: true);
 
             return dependencies;
         }

@@ -261,12 +261,15 @@ namespace System.Text.RegularExpressions.Tests
         [InlineData("a|b|c|d|e|g|h|z", "[a-eghz]")]
         [InlineData("a|b|c|def|g|h", "(?>[a-c]|def|[gh])")]
         [InlineData("this|that|there|then|those", "th(?>is|at|ere|en|ose)")]
+        [InlineData("^this|^that|^there|^then|^those", "^th(?>is|at|ere|en|ose)")]
+        [InlineData("\bthis|\bthat|\bthere|\bthen|\bthose", "\bth(?>is|at|ere|en|ose)")]
         [InlineData("it's (?>this|that|there|then|those)", "it's (?>th(?>is|at|e(?>re|n)|ose))")]
         [InlineData("it's (?>this|that|there|then|those)!", "it's (?>th(?>is|at|e(?>re|n)|ose))!")]
         [InlineData("abcd|abce", "abc[de]")]
         [InlineData("abcd|abef", "ab(?>cd|ef)")]
         [InlineData("abcd|aefg", "a(?>bcd|efg)")]
         [InlineData("abcd|abc|ab|a", "a(?>bcd|bc|b|)")]
+        [InlineData("^abcd|^abce", "^(?:abc[de])")]
         // [InlineData("abcde|abcdef", "abcde(?>|f)")] // TODO https://github.com/dotnet/runtime/issues/66031: Need to reorganize optimizations to avoid an extra Empty being left at the end of the tree
         [InlineData("abcdef|abcde", "abcde(?>f|)")]
         [InlineData("abcdef|abcdeg|abcdeh|abcdei|abcdej|abcdek|abcdel", "abcde[f-l]")]
@@ -370,7 +373,7 @@ namespace System.Text.RegularExpressions.Tests
             string expectedStr = RegexParser.Parse(expected, RegexOptions.None, CultureInfo.InvariantCulture).Root.ToString();
             if (actualStr != expectedStr)
             {
-                throw new Xunit.Sdk.EqualException(expectedStr, actualStr);
+                throw Xunit.Sdk.EqualException.ForMismatchedValues(expectedStr, actualStr);
             }
         }
 
@@ -495,6 +498,8 @@ namespace System.Text.RegularExpressions.Tests
         [InlineData("a*(?(xyz)acd|efg)", "(?>a*)(?(xyz)acd|efg)")]
         [InlineData("a*(?(xyz)bcd|afg)", "(?>a*)(?(xyz)bcd|afg)")]
         [InlineData("a*(?(xyz)bcd)", "(?>a*)(?(xyz)bcd)")]
+        // Different prefixes on alternation branches
+        [InlineData("^abcd|$abce", "^abcd|^abce")]
         public void PatternsReduceDifferently(string actual, string expected)
         {
             // NOTE: RegexNode.ToString is only compiled into debug builds, so DEBUG is currently set on the unit tests project.
@@ -503,7 +508,7 @@ namespace System.Text.RegularExpressions.Tests
             string expectedStr = RegexParser.Parse(expected, RegexOptions.None, CultureInfo.InvariantCulture).Root.ToString();
             if (actualStr == expectedStr)
             {
-                throw new Xunit.Sdk.NotEqualException(expectedStr, actualStr);
+                throw Xunit.Sdk.NotEqualException.ForEqualValues(expectedStr, actualStr);
             }
         }
 
@@ -545,7 +550,7 @@ namespace System.Text.RegularExpressions.Tests
         [InlineData(@"((a{1,2}){4}){3,7}", 0, 12, 56)]
         [InlineData(@"((a{1,2}){4}?){3,7}", 0, 12, 56)]
         [InlineData(@"\b\w{4}\b", 0, 4, 4)]
-        [InlineData(@"\b\w{4}\b", (int)RegexOptions.ECMAScript,  4, 4)]
+        [InlineData(@"\b\w{4}\b", (int)RegexOptions.ECMAScript, 4, 4)]
         [InlineData(@"abcd(?=efgh)efgh", 0, 8, 8)]
         [InlineData(@"abcd(?<=cd)efgh", 0, 8, 8)]
         [InlineData(@"abcd(?!ab)efgh", 0, 8, 8)]
@@ -582,7 +587,7 @@ namespace System.Text.RegularExpressions.Tests
 
             Assert.Equal(expectedMin, tree.FindOptimizations.MinRequiredLength);
 
-            if (!pattern.EndsWith("$", StringComparison.Ordinal) &&
+            if (!pattern.EndsWith('$') &&
                 !pattern.EndsWith(@"\Z", StringComparison.OrdinalIgnoreCase))
             {
                 // MaxPossibleLength is currently only computed/stored if there's a trailing End{Z} anchor as the max length is otherwise unused
@@ -601,12 +606,12 @@ namespace System.Text.RegularExpressions.Tests
             int minRequiredLength = tree.FindOptimizations.MinRequiredLength;
 
             Assert.True(
-                minRequiredLength == 1 /* successfully analyzed */ || minRequiredLength == 0 /* ran out of stack space to complete analysis */,
+                minRequiredLength is 1 /* successfully analyzed */ or 0 /* ran out of stack space to complete analysis */,
                 $"Expected 1 or 0, got {minRequiredLength}");
 
             int? maxPossibleLength = tree.FindOptimizations.MaxPossibleLength;
             Assert.True(
-                maxPossibleLength == 1 /* successfully analyzed */ || maxPossibleLength is null /* ran out of stack space to complete analysis */,
+                maxPossibleLength is 1 /* successfully analyzed */ or null /* ran out of stack space to complete analysis */,
                 $"Expected 1 or null, got {maxPossibleLength}");
         }
 

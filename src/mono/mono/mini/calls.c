@@ -4,6 +4,7 @@
 
 #include <config.h>
 #include <mono/utils/mono-compiler.h>
+#include <minipal/debugger.h>
 
 #ifndef DISABLE_JIT
 
@@ -16,7 +17,6 @@
 #include "aot-compiler.h"
 #include <mono/metadata/abi-details.h>
 #include <mono/metadata/class-abi-details.h>
-#include <mono/utils/mono-utils-debug.h>
 #include "mono/metadata/icall-signatures.h"
 
 static const gboolean debug_tailcall_break_compile = FALSE; // break in method_to_ir
@@ -118,16 +118,23 @@ handle_enum:
 	case MONO_TYPE_R8:
 		return calli? OP_FCALL_REG: virt? OP_FCALL_MEMBASE: OP_FCALL;
 	case MONO_TYPE_VALUETYPE:
-		if (m_class_is_enumtype (type->data.klass)) {
-			type = mono_class_enum_basetype_internal (type->data.klass);
+		if (m_class_is_enumtype (m_type_data_get_klass_unchecked (type))) {
+			type = mono_class_enum_basetype_internal (m_type_data_get_klass_unchecked (type));
 			goto handle_enum;
-		} else
-			return calli? OP_VCALL_REG: virt? OP_VCALL_MEMBASE: OP_VCALL;
+		} else {
+			if (mini_class_is_simd (cfg, mono_class_from_mono_type_internal (type)))
+				return calli? OP_XCALL_REG: virt? OP_XCALL_MEMBASE: OP_XCALL;
+			else
+				return calli? OP_VCALL_REG: virt? OP_VCALL_MEMBASE: OP_VCALL;
+		}
 	case MONO_TYPE_TYPEDBYREF:
 		return calli? OP_VCALL_REG: virt? OP_VCALL_MEMBASE: OP_VCALL;
-	case MONO_TYPE_GENERICINST:
-		type = m_class_get_byval_arg (type->data.generic_class->container_class);
+	case MONO_TYPE_GENERICINST: {
+		if (mini_class_is_simd (cfg, mono_class_from_mono_type_internal (type)))
+			return calli? OP_XCALL_REG: virt? OP_XCALL_MEMBASE: OP_XCALL;
+		type = m_class_get_byval_arg (m_type_data_get_generic_class_unchecked (type)->container_class);
 		goto handle_enum;
+	}
 	case MONO_TYPE_VAR:
 	case MONO_TYPE_MVAR:
 		/* gsharedvt */
@@ -158,7 +165,7 @@ mini_emit_call_args (MonoCompile *cfg, MonoMethodSignature *sig,
 	}
 
 	if (tailcall && (debug_tailcall_break_compile || debug_tailcall_break_run)
-		&& mono_is_usermode_native_debugger_present ()) {
+		&& minipal_is_native_debugger_present ()) {
 
 		if (debug_tailcall_break_compile)
 			G_BREAKPOINT ();
@@ -412,6 +419,8 @@ callvirt_to_call (int opcode)
 		return OP_RCALL;
 	case OP_VCALL_MEMBASE:
 		return OP_VCALL;
+	case OP_XCALL_MEMBASE:
+		return OP_XCALL;
 	case OP_LCALL_MEMBASE:
 		return OP_LCALL;
 	default:

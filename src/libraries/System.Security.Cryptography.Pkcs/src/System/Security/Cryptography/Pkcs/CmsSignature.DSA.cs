@@ -1,10 +1,9 @@
 // Licensed to the .NET Foundation under one or more agreements.
 // The .NET Foundation licenses this file to you under the MIT license.
 
-using System.Buffers;
+using System.Collections.Generic;
 using System.Diagnostics;
 using System.Diagnostics.CodeAnalysis;
-using System.Collections.Generic;
 using System.Security.Cryptography.X509Certificates;
 using Internal.Cryptography;
 
@@ -37,13 +36,11 @@ namespace System.Security.Cryptography.Pkcs
                 _expectedDigest = expectedDigest;
             }
 
-            protected override bool VerifyKeyType(AsymmetricAlgorithm key)
-            {
-                return (key as DSA) != null;
-            }
+            protected override bool VerifyKeyType(object key) => key is DSA;
+            internal override bool NeedsHashedMessage => true;
 
             internal override bool VerifySignature(
-#if NETCOREAPP || NETSTANDARD2_1
+#if NET || NETSTANDARD2_1
                 ReadOnlySpan<byte> valueHash,
                 ReadOnlyMemory<byte> signature,
 #else
@@ -51,10 +48,11 @@ namespace System.Security.Cryptography.Pkcs
                 byte[] signature,
 #endif
                 string? digestAlgorithmOid,
-                HashAlgorithmName digestAlgorithmName,
                 ReadOnlyMemory<byte>? signatureParameters,
                 X509Certificate2 certificate)
             {
+                HashAlgorithmName digestAlgorithmName = PkcsHelpers.GetDigestAlgorithm(digestAlgorithmOid, forVerification: true);
+
                 if (_expectedDigest != digestAlgorithmName)
                 {
                     throw new CryptographicException(
@@ -76,7 +74,7 @@ namespace System.Security.Cryptography.Pkcs
                 DSAParameters dsaParameters = dsa.ExportParameters(false);
                 int bufSize = 2 * dsaParameters.Q!.Length;
 
-#if NETCOREAPP || NETSTANDARD2_1
+#if NET || NETSTANDARD2_1
                 byte[] rented = CryptoPool.Rent(bufSize);
                 Span<byte> ieee = new Span<byte>(rented, 0, bufSize);
 
@@ -91,7 +89,7 @@ namespace System.Security.Cryptography.Pkcs
                     }
 
                     return dsa.VerifySignature(valueHash, ieee);
-#if NETCOREAPP || NETSTANDARD2_1
+#if NET || NETSTANDARD2_1
                 }
                 finally
                 {
@@ -101,14 +99,14 @@ namespace System.Security.Cryptography.Pkcs
             }
 
             protected override bool Sign(
-#if NETCOREAPP || NETSTANDARD2_1
+#if NET || NETSTANDARD2_1
                 ReadOnlySpan<byte> dataHash,
 #else
-                byte[] dataHash,
+                ReadOnlyMemory<byte> dataHash,
 #endif
-                HashAlgorithmName hashAlgorithmName,
+                string? hashAlgorithmOid,
                 X509Certificate2 certificate,
-                AsymmetricAlgorithm? key,
+                object? key,
                 bool silent,
                 [NotNullWhen(true)] out string? signatureAlgorithm,
                 [NotNullWhen(true)] out byte[]? signatureValue,
@@ -130,11 +128,14 @@ namespace System.Security.Cryptography.Pkcs
                 }
 
                 string? oidValue =
-                    hashAlgorithmName == HashAlgorithmName.SHA1 ? Oids.DsaWithSha1 :
-                    hashAlgorithmName == HashAlgorithmName.SHA256 ? Oids.DsaWithSha256 :
-                    hashAlgorithmName == HashAlgorithmName.SHA384 ? Oids.DsaWithSha384 :
-                    hashAlgorithmName == HashAlgorithmName.SHA512 ? Oids.DsaWithSha512 :
-                    null;
+                    hashAlgorithmOid switch
+                    {
+                        Oids.Sha1 => Oids.DsaWithSha1,
+                        Oids.Sha256 => Oids.DsaWithSha256,
+                        Oids.Sha384 => Oids.DsaWithSha384,
+                        Oids.Sha512 => Oids.DsaWithSha512,
+                        _ => null
+                    };
 
                 if (oidValue == null)
                 {
@@ -145,7 +146,7 @@ namespace System.Security.Cryptography.Pkcs
 
                 signatureAlgorithm = oidValue;
 
-#if NETCOREAPP || NETSTANDARD2_1
+#if NET || NETSTANDARD2_1
                 // The Q size cannot be bigger than the KeySize.
                 byte[] rented = CryptoPool.Rent(dsa.KeySize / 8);
                 int bytesWritten = 0;

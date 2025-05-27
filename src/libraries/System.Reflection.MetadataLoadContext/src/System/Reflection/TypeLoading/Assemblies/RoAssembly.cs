@@ -45,12 +45,12 @@ namespace System.Reflection.TypeLoading
 
         // Location and codebase
         public abstract override string Location { get; }
-#if NETCOREAPP
+#if NET
         [Obsolete(Obsoletions.CodeBaseMessage, DiagnosticId = Obsoletions.CodeBaseDiagId, UrlFormat = Obsoletions.SharedUrlFormat)]
         [RequiresAssemblyFiles(ThrowingMessageInRAF)]
 #endif
         public sealed override string CodeBase => throw new NotSupportedException(SR.NotSupported_AssemblyCodeBase);
-#if NETCOREAPP
+#if NET
         [Obsolete(Obsoletions.CodeBaseMessage, DiagnosticId = Obsoletions.CodeBaseDiagId, UrlFormat = Obsoletions.SharedUrlFormat)]
         [RequiresAssemblyFiles(ThrowingMessageInRAF)]
 #endif
@@ -99,10 +99,7 @@ namespace System.Reflection.TypeLoading
         // Api to retrieve types by name. Retrieves both types physically defined in this module and types this assembly forwards from another assembly.
         public sealed override Type? GetType(string name, bool throwOnError, bool ignoreCase)
         {
-            if (name is null)
-            {
-                throw new ArgumentNullException(nameof(name));
-            }
+            ArgumentNullException.ThrowIfNull(name);
 
             // Known compat disagreement: This api is supposed to throw an ArgumentException if the name has an assembly qualification
             // (though the intended meaning seems clear.) This is difficult for us to implement as we don't have our own type name parser.
@@ -159,7 +156,7 @@ namespace System.Reflection.TypeLoading
 
         // Miscellaneous properties
         public sealed override bool ReflectionOnly => true;
-#if NETCOREAPP
+#if NET
         [Obsolete("The Global Assembly Cache is not supported.", DiagnosticId = "SYSLIB0005", UrlFormat = "https://aka.ms/dotnet-warnings/{0}")]
 #endif
         public sealed override bool GlobalAssemblyCache => false;

@@ -144,8 +144,8 @@ namespace
             SString::Iterator i = m_message.Begin();
             if (!m_message.Find(i, new_message))
             {
-                m_message += new_message;
-                m_message += SString(SString::Utf8, "\n");
+                m_message.Append(new_message);
+                m_message.AppendUTF8("\n");
             }
 #else
             m_message = SString(SString::Utf8, message);
@@ -295,11 +295,11 @@ INT_PTR NativeLibrary::GetNativeLibraryExport(NATIVE_LIBRARY_HANDLE handle, LPCW
 
 #ifndef TARGET_UNIX
     INT_PTR address = reinterpret_cast<INT_PTR>(GetProcAddress((HMODULE)handle, lpstr));
-    if ((address == NULL) && throwOnError)
+    if ((address == 0) && throwOnError)
         COMPlusThrow(kEntryPointNotFoundException, IDS_EE_NDIRECT_GETPROCADDR_WIN_DLL, symbolName);
 #else // !TARGET_UNIX
     INT_PTR address = reinterpret_cast<INT_PTR>(PAL_GetProcAddressDirect(handle, lpstr));
-    if ((address == NULL) && throwOnError)
+    if ((address == 0) && throwOnError)
         COMPlusThrow(kEntryPointNotFoundException, IDS_EE_NDIRECT_GETPROCADDR_UNIX_SO, symbolName);
 #endif // !TARGET_UNIX
 
@@ -386,7 +386,7 @@ namespace
         STANDARD_VM_CONTRACT;
 
         INT_PTR ptrManagedAssemblyLoadContext = GetManagedAssemblyLoadContext(pAssembly);
-        if (ptrManagedAssemblyLoadContext == NULL)
+        if (ptrManagedAssemblyLoadContext == 0)
         {
             return NULL;
         }
@@ -472,10 +472,21 @@ namespace
     NATIVE_LIBRARY_HANDLE LoadFromPInvokeAssemblyDirectory(Assembly *pAssembly, LPCWSTR libName, DWORD flags, LoadLibErrorTracker *pErrorTracker)
     {
         STANDARD_VM_CONTRACT;
+        _ASSERTE(libName != NULL);
+
+        SString path{ pAssembly->GetPEAssembly()->GetPath() };
+
+        // Bundled assembly - path will be empty, path to load should point to the single-file bundle
+        bool isBundledAssembly = pAssembly->GetPEAssembly()->HasPEImage() && pAssembly->GetPEAssembly()->GetPEImage()->IsInBundle();
+        _ASSERTE(!isBundledAssembly || Bundle::AppBundle != NULL);
+        if (isBundledAssembly)
+            path.Set(pAssembly->GetPEAssembly()->GetPEImage()->GetPathToLoad());
+
+        if (path.IsEmpty())
+            return NULL;
 
         NATIVE_LIBRARY_HANDLE hmod = NULL;
-
-        SString path = pAssembly->GetPEAssembly()->GetPath();
+        _ASSERTE(!Path::IsRelative(path));
 
         SString::Iterator lastPathSeparatorIter = path.End();
         if (PEAssembly::FindLastPathSeparator(path, lastPathSeparatorIter))
@@ -483,6 +494,15 @@ namespace
             lastPathSeparatorIter++;
             path.Truncate(lastPathSeparatorIter);
 
+            path.Append(libName);
+            hmod = LocalLoadLibraryHelper(path, flags, pErrorTracker);
+        }
+
+        // Bundle with additional files extracted - also treat the extraction path as the assembly directory for native library load
+        if (hmod == NULL && isBundledAssembly && Bundle::AppBundle->HasExtractedFiles())
+        {
+            path.Set(Bundle::AppBundle->ExtractionPath());
+            path.Append(DIRECTORY_SEPARATOR_CHAR_W);
             path.Append(libName);
             hmod = LocalLoadLibraryHelper(path, flags, pErrorTracker);
         }
@@ -597,7 +617,7 @@ namespace
 
         int varCount = 0;
 
-        // Follow LoadLibrary rules in MSDN doc: https://docs.microsoft.com/windows/win32/api/libloaderapi/nf-libloaderapi-loadlibrarya
+        // Follow LoadLibrary rules in MSDN doc: https://learn.microsoft.com/windows/win32/api/libloaderapi/nf-libloaderapi-loadlibrarya
         // To prevent the function from appending ".DLL" to the module name, include a trailing point character (.) in the module name string
         // or provide an absolute path.
         libNameVariations[varCount++] = NameFmt;
@@ -606,9 +626,9 @@ namespace
         // or an existing known extension. This is done due to issues with case-sensitive file systems
         // on Windows. The Windows loader always appends ".DLL" as opposed to the more common ".dll".
         if (libNameIsRelativePath
-            && !libName.EndsWith(W("."))
-            && !libName.EndsWithCaseInsensitive(W(".dll"))
-            && !libName.EndsWithCaseInsensitive(W(".exe")))
+            && !libName.EndsWith(SL(W(".")))
+            && !libName.EndsWithCaseInsensitive(SL(W(".dll")))
+            && !libName.EndsWithCaseInsensitive(SL(W(".exe"))))
         {
             libNameVariations[varCount++] = NameSuffixFmt;
         }
@@ -618,7 +638,7 @@ namespace
 #endif // TARGET_UNIX
 
     // Search for the library and variants of its name in probing directories.
-    NATIVE_LIBRARY_HANDLE LoadNativeLibraryBySearch(Assembly *callingAssembly,
+    NATIVE_LIBRARY_HANDLE LoadNativeLibraryBySearch(Assembly *callingAssembly, BOOL userSpecifiedSearchFlags,
                                                     BOOL searchAssemblyDirectory, DWORD dllImportSearchPathFlags,
                                                     LoadLibErrorTracker * pErrorTracker, LPCWSTR wszLibName)
     {
@@ -644,7 +664,7 @@ namespace
 #ifdef TARGET_WINDOWS
             if (u16_strcmp(wszLibName, W("hostpolicy.dll")) == 0)
             {
-                return WszGetModuleHandle(NULL);
+                return GetModuleHandle(NULL);
             }
 #else
             if (u16_strcmp(wszLibName, W("libhostpolicy")) == 0)
@@ -656,6 +676,14 @@ namespace
 
         AppDomain* pDomain = GetAppDomain();
         DWORD loadWithAlteredPathFlags = GetLoadWithAlteredSearchPathFlag();
+        DWORD loadLibrarySearchFlags = 0;
+#ifdef TARGET_WINDOWS
+        loadLibrarySearchFlags = LOAD_LIBRARY_SEARCH_DLL_LOAD_DIR
+            | LOAD_LIBRARY_SEARCH_APPLICATION_DIR
+            | LOAD_LIBRARY_SEARCH_USER_DIRS
+            | LOAD_LIBRARY_SEARCH_SYSTEM32
+            | LOAD_LIBRARY_SEARCH_DEFAULT_DIRS;
+#endif
         bool libNameIsRelativePath = Path::IsRelative(wszLibName);
 
         // P/Invokes are often declared with variations on the actual library name.
@@ -665,7 +693,7 @@ namespace
         // We try to dlopen with such variations on the original.
         NameVariations prefixSuffixCombinations[MaxVariationCount] = {};
         int numberOfVariations = ARRAY_SIZE(prefixSuffixCombinations);
-        DetermineLibNameVariations(prefixSuffixCombinations, &numberOfVariations, wszLibName, libNameIsRelativePath);
+        DetermineLibNameVariations(prefixSuffixCombinations, &numberOfVariations, SString{ SString::Literal, wszLibName }, libNameIsRelativePath);
         for (int i = 0; i < numberOfVariations; i++)
         {
             SString currLibNameVariation;
@@ -689,14 +717,8 @@ namespace
 
             if (!libNameIsRelativePath)
             {
-                DWORD flags = loadWithAlteredPathFlags;
-                if ((dllImportSearchPathFlags & LOAD_LIBRARY_SEARCH_DLL_LOAD_DIR) != 0)
-                {
-                    // LOAD_LIBRARY_SEARCH_DLL_LOAD_DIR is the only flag affecting absolute path. Don't OR the flags
-                    // unconditionally as all absolute path P/Invokes could then lose LOAD_WITH_ALTERED_SEARCH_PATH.
-                    flags |= dllImportSearchPathFlags;
-                }
-
+                // LOAD_WITH_ALTERED_SEARCH_PATH is incompatible with LOAD_LIBRARY_SEARCH flags. Remove those flags if they are set.
+                DWORD flags = loadWithAlteredPathFlags | (dllImportSearchPathFlags & ~loadLibrarySearchFlags);
                 hmod = LocalLoadLibraryHelper(currLibNameVariation, flags, pErrorTracker);
                 if (hmod != NULL)
                 {
@@ -705,17 +727,29 @@ namespace
             }
             else if ((callingAssembly != nullptr) && searchAssemblyDirectory)
             {
-                hmod = LoadFromPInvokeAssemblyDirectory(callingAssembly, currLibNameVariation, loadWithAlteredPathFlags | dllImportSearchPathFlags, pErrorTracker);
+                // LOAD_WITH_ALTERED_SEARCH_PATH is incompatible with LOAD_LIBRARY_SEARCH flags. Remove those flags if they are set.
+                DWORD flags = loadWithAlteredPathFlags | (dllImportSearchPathFlags & ~loadLibrarySearchFlags);
+                hmod = LoadFromPInvokeAssemblyDirectory(callingAssembly, currLibNameVariation, flags, pErrorTracker);
                 if (hmod != NULL)
                 {
                     return hmod;
                 }
             }
 
-            hmod = LocalLoadLibraryHelper(currLibNameVariation, dllImportSearchPathFlags, pErrorTracker);
-            if (hmod != NULL)
+            // Internally, search path flags and whether or not to search the assembly directory are
+            // tracked separately. However, on the API level, DllImportSearchPath represents them both.
+            // When unspecified, the default is to search the assembly directory and all OS defaults,
+            // which maps to searchAssemblyDirectory being true and dllImportSearchPathFlags being 0.
+            // When a user specifies DllImportSearchPath.AssemblyDirectory, searchAssemblyDirectory is
+            // true, dllImportSearchPathFlags is 0, and the desired logic is to only search the assembly
+            // directory (handled above), so we avoid doing any additional load search in that case.
+            if (!userSpecifiedSearchFlags || !searchAssemblyDirectory || dllImportSearchPathFlags != 0)
             {
-                return hmod;
+                hmod = LocalLoadLibraryHelper(currLibNameVariation, dllImportSearchPathFlags, pErrorTracker);
+                if (hmod != NULL)
+                {
+                    return hmod;
+                }
             }
         }
 
@@ -729,10 +763,10 @@ namespace
         BOOL searchAssemblyDirectory;
         DWORD dllImportSearchPathFlags;
 
-        GetDllImportSearchPathFlags(pMD, &dllImportSearchPathFlags, &searchAssemblyDirectory);
+        BOOL userSpecifiedSearchFlags = GetDllImportSearchPathFlags(pMD, &dllImportSearchPathFlags, &searchAssemblyDirectory);
 
         Assembly *pAssembly = pMD->GetMethodTable()->GetAssembly();
-        return LoadNativeLibraryBySearch(pAssembly, searchAssemblyDirectory, dllImportSearchPathFlags, pErrorTracker, wszLibName);
+        return LoadNativeLibraryBySearch(pAssembly, userSpecifiedSearchFlags, searchAssemblyDirectory, dllImportSearchPathFlags, pErrorTracker, wszLibName);
     }
 }
 
@@ -769,12 +803,12 @@ NATIVE_LIBRARY_HANDLE NativeLibrary::LoadLibraryByName(LPCWSTR libraryName, Asse
     }
     else
     {
-        GetDllImportSearchPathFlags(callingAssembly->GetModule(),
+        hasDllImportSearchFlags = GetDllImportSearchPathFlags(callingAssembly->GetModule(),
                                     &dllImportSearchPathFlags, &searchAssemblyDirectory);
     }
 
     LoadLibErrorTracker errorTracker;
-    hmod = LoadNativeLibraryBySearch(callingAssembly, searchAssemblyDirectory, dllImportSearchPathFlags, &errorTracker, libraryName);
+    hmod = LoadNativeLibraryBySearch(callingAssembly, hasDllImportSearchFlags, searchAssemblyDirectory, dllImportSearchPathFlags, &errorTracker, libraryName);
     if (hmod != nullptr)
         return hmod;
 
@@ -807,7 +841,7 @@ namespace
         if ( !name || !*name )
             return NULL;
 
-        PREFIX_ASSUME( name != NULL );
+        _ASSERTE( name != NULL );
         MAKE_WIDEPTR_FROMUTF8( wszLibName, name );
 
         NativeLibraryHandleHolder hmod = LoadNativeLibraryViaDllImportResolver(pMD, wszLibName);

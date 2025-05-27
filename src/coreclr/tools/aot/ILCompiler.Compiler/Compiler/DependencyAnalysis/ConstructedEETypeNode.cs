@@ -8,7 +8,7 @@ using Internal.TypeSystem;
 
 namespace ILCompiler.DependencyAnalysis
 {
-    public class ConstructedEETypeNode : EETypeNode
+    public sealed class ConstructedEETypeNode : EETypeNode
     {
         public ConstructedEETypeNode(NodeFactory factory, TypeDesc type) : base(factory, type)
         {
@@ -20,7 +20,7 @@ namespace ILCompiler.DependencyAnalysis
 
         public override bool ShouldSkipEmittingObjectNode(NodeFactory factory) => false;
 
-        protected override bool EmitVirtualSlotsAndInterfaces => true;
+        protected override bool EmitVirtualSlots => true;
 
         protected override DependencyList ComputeNonRelocationBasedDependencies(NodeFactory factory)
         {
@@ -30,6 +30,9 @@ namespace ILCompiler.DependencyAnalysis
             // The emitter will ensure we don't emit both, but this allows us assert that we only generate
             // relocs to nodes we emit.
             dependencyList.Add(factory.NecessaryTypeSymbol(_type), "NecessaryType for constructed type");
+
+            if (_type is MetadataType mdType)
+                ModuleUseBasedDependencyAlgorithm.AddDependenciesDueToModuleUse(ref dependencyList, factory, mdType.Module);
 
             DefType closestDefType = _type.GetClosestDefType();
 
@@ -50,21 +53,8 @@ namespace ILCompiler.DependencyAnalysis
 
             dependencyList.Add(factory.VTable(closestDefType), "VTable");
 
-            if (factory.TypeSystemContext.SupportsUniversalCanon)
-            {
-                foreach (var instantiationType in _type.Instantiation)
-                {
-                    if (instantiationType.IsValueType)
-                    {
-                        // All valuetype generic parameters of a constructed type may be effectively constructed. This is generally not that
-                        // critical, but in the presence of universal generics the compiler may generate a Box followed by calls to ToString,
-                        // GetHashcode or Equals in ways that cannot otherwise be detected by dependency analysis. Thus force all struct type
-                        // generic parameters to be considered constructed when walking dependencies of a constructed generic
-                        dependencyList.Add(factory.ConstructedTypeSymbol(instantiationType.ConvertToCanonForm(CanonicalFormKind.Specific)),
-                        "Struct generic parameters in constructed types may be assumed to be used as constructed in constructed generic types");
-                    }
-                }
-            }
+            // Ask the metadata manager if we have any dependencies due to the presence of the EEType.
+            factory.MetadataManager.GetDependenciesDueToEETypePresence(ref dependencyList, factory, _type);
 
             factory.InteropStubManager.AddInterestingInteropConstructedTypeDependencies(ref dependencyList, factory, _type);
 
@@ -74,6 +64,11 @@ namespace ILCompiler.DependencyAnalysis
         protected override ISymbolNode GetBaseTypeNode(NodeFactory factory)
         {
             return _type.BaseType != null ? factory.ConstructedTypeSymbol(_type.BaseType) : null;
+        }
+
+        protected override FrozenRuntimeTypeNode GetFrozenRuntimeTypeNode(NodeFactory factory)
+        {
+            return factory.SerializedConstructedRuntimeTypeObject(_type);
         }
 
         protected override ISymbolNode GetNonNullableValueTypeArrayElementTypeNode(NodeFactory factory)

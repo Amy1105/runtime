@@ -34,7 +34,7 @@ namespace ILCompiler
     /// This class is responsible for managing native metadata to be emitted into the compiled
     /// module. It applies a policy that every type/method that is statically used shall be reflectable.
     /// </summary>
-    public sealed class UsageBasedMetadataManager : GeneratingMetadataManager
+    public sealed class UsageBasedMetadataManager : MetadataManager
     {
         private readonly CompilationModuleGroup _compilationModuleGroup;
 
@@ -50,12 +50,13 @@ namespace ILCompiler
             };
 
         private readonly List<TypeDesc> _typesWithForcedEEType = new List<TypeDesc>();
-        private readonly List<ModuleDesc> _modulesWithMetadata = new List<ModuleDesc>();
+        private readonly SortedSet<ModuleDesc> _modulesWithMetadata = new SortedSet<ModuleDesc>(CompilerComparer.Instance);
         private readonly List<FieldDesc> _fieldsWithMetadata = new List<FieldDesc>();
         private readonly List<MethodDesc> _methodsWithMetadata = new List<MethodDesc>();
         private readonly List<MetadataType> _typesWithMetadata = new List<MetadataType>();
         private readonly List<FieldDesc> _fieldsWithRuntimeMapping = new List<FieldDesc>();
         private readonly List<ReflectableCustomAttribute> _customAttributesWithMetadata = new List<ReflectableCustomAttribute>();
+        private readonly List<ReflectableParameter> _parametersWithMetadata = new List<ReflectableParameter>();
 
         internal IReadOnlyDictionary<string, bool> FeatureSwitches { get; }
 
@@ -64,8 +65,6 @@ namespace ILCompiler
         private readonly HashSet<string> _rootEntireAssembliesModules;
         private readonly HashSet<string> _trimmedAssemblies;
         private readonly List<string> _satelliteAssemblyFiles;
-
-        internal FlowAnnotations FlowAnnotations { get; }
 
         internal Logger Logger { get; }
 
@@ -86,12 +85,11 @@ namespace ILCompiler
             IEnumerable<string> additionalRootedAssemblies,
             IEnumerable<string> trimmedAssemblies,
             IEnumerable<string> satelliteAssemblyFilePaths)
-            : base(typeSystemContext, blockingPolicy, resourceBlockingPolicy, logFile, stackTracePolicy, invokeThunkGenerationPolicy, options)
+            : base(typeSystemContext, blockingPolicy, resourceBlockingPolicy, logFile, stackTracePolicy, invokeThunkGenerationPolicy, options, flowAnnotations)
         {
             _compilationModuleGroup = group;
             _generationOptions = generationOptions;
 
-            FlowAnnotations = flowAnnotations;
             Logger = logger;
 
             _linkAttributesHashTable = new LinkAttributesHashTable(Logger, featureSwitchValues);
@@ -148,6 +146,12 @@ namespace ILCompiler
             if (customAttributeMetadataNode != null)
             {
                 _customAttributesWithMetadata.Add(customAttributeMetadataNode.CustomAttribute);
+            }
+
+            var parameterMetadataNode = obj as MethodParameterMetadataNode;
+            if (parameterMetadataNode != null)
+            {
+                _parametersWithMetadata.Add(parameterMetadataNode.Parameter);
             }
 
             var reflectedFieldNode = obj as ReflectedFieldNode;
@@ -224,17 +228,34 @@ namespace ILCompiler
             out byte[] metadataBlob,
             out List<MetadataMapping<MetadataType>> typeMappings,
             out List<MetadataMapping<MethodDesc>> methodMappings,
+            out Dictionary<MethodDesc, int> methodMetadataMappings,
             out List<MetadataMapping<FieldDesc>> fieldMappings,
+            out Dictionary<FieldDesc, int> fieldMetadataMappings,
             out List<StackTraceMapping> stackTraceMapping)
         {
             ComputeMetadata(new GeneratedTypesAndCodeMetadataPolicy(_blockingPolicy, factory),
-                factory, out metadataBlob, out typeMappings, out methodMappings, out fieldMappings, out stackTraceMapping);
+                factory, out metadataBlob, out typeMappings, out methodMappings, out methodMetadataMappings, out fieldMappings, out fieldMetadataMappings, out stackTraceMapping);
         }
 
         protected override void GetMetadataDependenciesDueToReflectability(ref DependencyList dependencies, NodeFactory factory, MethodDesc method)
         {
             dependencies ??= new DependencyList();
             dependencies.Add(factory.MethodMetadata(method.GetTypicalMethodDefinition()), "Reflectable method");
+        }
+
+        public override void GetNativeLayoutMetadataDependencies(ref DependencyList dependencies, NodeFactory factory, MethodDesc method)
+        {
+            if (CanGenerateMetadata(method))
+            {
+                dependencies ??= new DependencyList();
+                dependencies.Add(factory.LimitedMethodMetadata(method.GetTypicalMethodDefinition()), "Method referenced from native layout");
+            }
+            else
+            {
+                // We can end up here with reflection disabled or multifile compilation.
+                // If we ever productize either, we'll need to do something different.
+                // Scenarios that currently need this won't work in these modes.
+            }
         }
 
         protected override void GetMetadataDependenciesDueToReflectability(ref DependencyList dependencies, NodeFactory factory, FieldDesc field)
@@ -351,7 +372,7 @@ namespace ILCompiler
                     var rootProvider = new RootingServiceProvider(factory, dependencies.Add);
                     foreach (TypeDesc t in mdType.Module.GetAllTypes())
                     {
-                        RootingHelpers.TryRootType(rootProvider, t, reason);
+                        RootingHelpers.TryRootType(rootProvider, t, rootBaseTypes: false, reason);
                     }
                 }
             }
@@ -411,9 +432,19 @@ namespace ILCompiler
         {
             // Check to see if we have any dataflow annotations on the type.
             // The check below also covers flow annotations inherited through base classes and implemented interfaces.
-            if (type.IsDefType
-                && !type.IsInterface /* "IFoo x; x.GetType();" -> this doesn't actually return an interface type */
-                && FlowAnnotations.GetTypeAnnotation(type) != default)
+            bool hasFlowAnnotations = type.IsDefType && FlowAnnotations.GetTypeAnnotation(type) != default;
+
+            if (hasFlowAnnotations)
+            {
+                dependencies ??= new CombinedDependencyList();
+                dependencies.Add(new DependencyNodeCore<NodeFactory>.CombinedDependencyListEntry(
+                    factory.ObjectGetTypeFlowDependencies((MetadataType)type),
+                    factory.ObjectGetTypeCalled((MetadataType)type),
+                    "Type exists and GetType called on it"));
+            }
+
+            if (hasFlowAnnotations
+                && !type.IsInterface /* "IFoo x; x.GetType();" -> this doesn't actually return an interface type */)
             {
                 // We have some flow annotations on this type.
                 //
@@ -431,8 +462,8 @@ namespace ILCompiler
                     // Ensure we have the flow dependencies.
                     dependencies ??= new CombinedDependencyList();
                     dependencies.Add(new DependencyNodeCore<NodeFactory>.CombinedDependencyListEntry(
-                        factory.ObjectGetTypeFlowDependencies((MetadataType)type),
-                        factory.ObjectGetTypeFlowDependencies((MetadataType)baseType),
+                        factory.ObjectGetTypeCalled((MetadataType)type),
+                        factory.ObjectGetTypeCalled((MetadataType)baseType),
                         "GetType called on the base type"));
 
                     // We don't have to follow all the bases since the base MethodTable will bubble this up
@@ -447,8 +478,8 @@ namespace ILCompiler
                         // Ensure we have the flow dependencies.
                         dependencies ??= new CombinedDependencyList();
                         dependencies.Add(new DependencyNodeCore<NodeFactory>.CombinedDependencyListEntry(
-                            factory.ObjectGetTypeFlowDependencies((MetadataType)type),
-                            factory.ObjectGetTypeFlowDependencies((MetadataType)interfaceType),
+                            factory.ObjectGetTypeCalled((MetadataType)type),
+                            factory.ObjectGetTypeCalled((MetadataType)interfaceType),
                             "GetType called on the interface"));
                     }
 
@@ -552,15 +583,55 @@ namespace ILCompiler
             }
         }
 
-        public override void GetDependenciesDueToDelegateCreation(ref DependencyList dependencies, NodeFactory factory, MethodDesc target)
+        public override void GetDependenciesDueToDelegateCreation(ref CombinedDependencyList dependencies, NodeFactory factory, TypeDesc delegateType, MethodDesc target)
         {
             if (!IsReflectionBlocked(target))
             {
-                dependencies ??= new DependencyList();
-                dependencies.Add(factory.ReflectedMethod(target.GetCanonMethodTarget(CanonicalFormKind.Specific)), "Target of a delegate");
+                dependencies ??= new CombinedDependencyList();
+
+                ReflectedMethodNode reflectedMethod = factory.ReflectedMethod(target.GetCanonMethodTarget(CanonicalFormKind.Specific));
+
+                TypeDesc canonDelegateType = delegateType.ConvertToCanonForm(CanonicalFormKind.Specific);
+                dependencies.Add(new DependencyNodeCore<NodeFactory>.CombinedDependencyListEntry(
+                    reflectedMethod,
+                    factory.ReflectedDelegate(canonDelegateType),
+                    "Target of delegate could be reflection-visible"));
+
+                if (canonDelegateType.HasInstantiation)
+                {
+                    dependencies.Add(new DependencyNodeCore<NodeFactory>.CombinedDependencyListEntry(
+                        reflectedMethod,
+                        factory.ReflectedDelegate(canonDelegateType.GetTypeDefinition()),
+                        "Target of delegate could be reflection-visible"));
+                }
+
+                dependencies.Add(new DependencyNodeCore<NodeFactory>.CombinedDependencyListEntry(
+                        reflectedMethod,
+                        factory.ReflectedDelegate(null),
+                        "Target of delegate could be reflection-visible"));
 
                 if (target.IsVirtual)
-                    dependencies.Add(factory.DelegateTargetVirtualMethod(target.GetCanonMethodTarget(CanonicalFormKind.Specific)), "Target of a delegate");
+                {
+                    DelegateTargetVirtualMethodNode targetVirtualMethod = factory.ReflectedDelegateTargetVirtualMethod(target.GetCanonMethodTarget(CanonicalFormKind.Specific));
+
+                    dependencies.Add(new DependencyNodeCore<NodeFactory>.CombinedDependencyListEntry(
+                        targetVirtualMethod,
+                        factory.ReflectedDelegate(canonDelegateType),
+                        "Target of delegate could be reflection-visible"));
+
+                    if (canonDelegateType.HasInstantiation)
+                    {
+                        dependencies.Add(new DependencyNodeCore<NodeFactory>.CombinedDependencyListEntry(
+                            targetVirtualMethod,
+                            factory.ReflectedDelegate(canonDelegateType.GetTypeDefinition()),
+                            "Target of delegate could be reflection-visible"));
+                    }
+
+                    dependencies.Add(new DependencyNodeCore<NodeFactory>.CombinedDependencyListEntry(
+                            targetVirtualMethod,
+                            factory.ReflectedDelegate(null),
+                            "Target of delegate could be reflection-visible"));
+                }
             }
         }
 
@@ -575,7 +646,7 @@ namespace ILCompiler
                 dependencies ??= new CombinedDependencyList();
                 dependencies.Add(new DependencyNodeCore<NodeFactory>.CombinedDependencyListEntry(
                     factory.ReflectedMethod(impl.GetCanonMethodTarget(CanonicalFormKind.Specific)),
-                    factory.DelegateTargetVirtualMethod(decl.GetCanonMethodTarget(CanonicalFormKind.Specific)),
+                    factory.ReflectedDelegateTargetVirtualMethod(decl.GetCanonMethodTarget(CanonicalFormKind.Specific)),
                     "Virtual method declaration is reflectable"));
             }
         }
@@ -603,6 +674,19 @@ namespace ILCompiler
 
                     if (DiagnosticUtilities.TryGetRequiresAttribute(method, DiagnosticUtilities.RequiresAssemblyFilesAttribute, out _))
                         Logger.LogWarning(new MessageOrigin(method), DiagnosticId.RequiresAssemblyFilesOnStaticConstructor, method.GetDisplayName());
+                }
+
+                if (method is EcmaMethod maybeEntrypoint
+                    && (maybeEntrypoint.Module.EntryPoint == method || (method.IsUnmanagedCallersOnly && maybeEntrypoint.GetUnmanagedCallersOnlyExportName() != null)))
+                {
+                    if (DiagnosticUtilities.TryGetRequiresAttribute(method, DiagnosticUtilities.RequiresUnreferencedCodeAttribute, out _))
+                        Logger.LogWarning(new MessageOrigin(method), DiagnosticId.RequiresUnreferencedCodeOnEntryPoint, method.GetDisplayName());
+
+                    if (DiagnosticUtilities.TryGetRequiresAttribute(method, DiagnosticUtilities.RequiresDynamicCodeAttribute, out _))
+                        Logger.LogWarning(new MessageOrigin(method), DiagnosticId.RequiresDynamicCodeOnEntryPoint, method.GetDisplayName());
+
+                    if (DiagnosticUtilities.TryGetRequiresAttribute(method, DiagnosticUtilities.RequiresAssemblyFilesAttribute, out _))
+                        Logger.LogWarning(new MessageOrigin(method), DiagnosticId.RequiresAssemblyFilesOnEntryPoint, method.GetDisplayName());
                 }
             }
 
@@ -660,10 +744,19 @@ namespace ILCompiler
         private IEnumerable<TypeDesc> GetTypesWithRuntimeMapping()
         {
             // All constructed types that are not blocked get runtime mapping
-            foreach (var constructedType in GetTypesWithEETypes())
+            foreach (var constructedType in GetTypesWithConstructedEETypes())
             {
                 if (!IsReflectionBlocked(constructedType))
                     yield return constructedType;
+            }
+
+            // All necessary types for which this is the highest load level that are not blocked
+            // get runtime mapping.
+            foreach (var necessaryType in GetTypesWithEETypes())
+            {
+                if (!ConstructedEETypeNode.CreationAllowed(necessaryType) &&
+                    !IsReflectionBlocked(necessaryType))
+                    yield return necessaryType;
             }
         }
 
@@ -735,13 +828,15 @@ namespace ILCompiler
             return true;
         }
 
-        public override void NoteOverridingMethod(MethodDesc baseMethod, MethodDesc overridingMethod)
+        public override void NoteOverridingMethod(MethodDesc baseMethod, MethodDesc overridingMethod, TypeSystemEntity origin)
         {
             baseMethod = baseMethod.GetTypicalMethodDefinition();
             overridingMethod = overridingMethod.GetTypicalMethodDefinition();
 
             if (baseMethod == overridingMethod)
                 return;
+
+            origin ??= overridingMethod;
 
             bool baseMethodTypeIsInterface = baseMethod.OwningType.IsInterface;
             foreach (var requiresAttribute in _requiresAttributeMismatchNameAndId)
@@ -754,7 +849,7 @@ namespace ILCompiler
                     string message = MessageFormat.FormatRequiresAttributeMismatch(overridingMethod.DoesMethodRequire(requiresAttribute.AttributeName, out _),
                         baseMethodTypeIsInterface, requiresAttribute.AttributeName, overridingMethodName, baseMethodName);
 
-                    Logger.LogWarning(overridingMethod, requiresAttribute.Id, message);
+                    Logger.LogWarning(origin, requiresAttribute.Id, message);
                 }
             }
 
@@ -762,7 +857,7 @@ namespace ILCompiler
             bool overridingMethodRequiresDataflow = FlowAnnotations.RequiresVirtualMethodDataflowAnalysis(overridingMethod);
             if (baseMethodRequiresDataflow || overridingMethodRequiresDataflow)
             {
-                FlowAnnotations.ValidateMethodAnnotationsAreSame(overridingMethod, baseMethod);
+                FlowAnnotations.ValidateMethodAnnotationsAreSame(overridingMethod, baseMethod, origin);
             }
         }
 
@@ -844,28 +939,10 @@ namespace ILCompiler
                 }
             }
 
-            var rootedCctorContexts = new List<MetadataType>();
-            foreach (NonGCStaticsNode cctorContext in GetCctorContextMapping())
-            {
-                // If we generated a static constructor and the owning type, this might be something
-                // that gets fed to RuntimeHelpers.RunClassConstructor. RunClassConstructor
-                // also works on reflection blocked types and there is a possibility that we
-                // wouldn't have generated the cctor otherwise.
-                //
-                // This is a heuristic and we'll possibly root more cctor contexts than
-                // strictly necessary, but it's not worth introducing a new node type
-                // in the compiler just so we can propagate this knowledge from dataflow analysis
-                // (that detects RunClassConstructor usage) and this spot.
-                if (!TypeGeneratesEEType(cctorContext.Type))
-                    continue;
-
-                rootedCctorContexts.Add(cctorContext.Type);
-            }
-
             return new AnalysisBasedMetadataManager(
-                _typeSystemContext, _blockingPolicy, _resourceBlockingPolicy, _metadataLogFile, _stackTraceEmissionPolicy, _dynamicInvokeThunkGenerationPolicy,
+                _typeSystemContext, _blockingPolicy, _resourceBlockingPolicy, _metadataLogFile, _stackTraceEmissionPolicy, _dynamicInvokeThunkGenerationPolicy, FlowAnnotations,
                 _modulesWithMetadata, _typesWithForcedEEType, reflectableTypes.ToEnumerable(), reflectableMethods.ToEnumerable(),
-                reflectableFields.ToEnumerable(), _customAttributesWithMetadata, rootedCctorContexts, _options);
+                reflectableFields.ToEnumerable(), _customAttributesWithMetadata, _parametersWithMetadata, _options);
         }
 
         private void AddDataflowDependency(ref DependencyList dependencies, NodeFactory factory, MethodIL methodIL, string reason)
@@ -965,7 +1042,7 @@ namespace ILCompiler
 
             public bool GeneratesMetadata(MethodDesc methodDef)
             {
-                return _factory.MethodMetadata(methodDef).Marked;
+                return _factory.MethodMetadata(methodDef).Marked || _factory.LimitedMethodMetadata(methodDef).Marked;
             }
 
             public bool GeneratesMetadata(MetadataType typeDef)
@@ -976,6 +1053,11 @@ namespace ILCompiler
             public bool GeneratesMetadata(EcmaModule module, CustomAttributeHandle caHandle)
             {
                 return _factory.CustomAttributeMetadata(new ReflectableCustomAttribute(module, caHandle)).Marked;
+            }
+
+            public bool GeneratesMetadata(EcmaModule module, ParameterHandle paramHandle)
+            {
+                return _factory.MethodParameterMetadata(new ReflectableParameter(module, paramHandle)).Marked;
             }
 
             public bool GeneratesMetadata(EcmaModule module, ExportedTypeHandle exportedTypeHandle)
@@ -990,6 +1072,11 @@ namespace ILCompiler
                     return true;
                 }
                 return GeneratesMetadata(targetType) || !_factory.CompilationModuleGroup.ContainsType(targetType);
+            }
+
+            public bool GeneratesInterfaceImpl(MetadataType typeDef, MetadataType interfaceImpl)
+            {
+                return _factory.MetadataManager.IsInterfaceUsed(interfaceImpl.GetTypeDefinition());
             }
 
             public bool IsBlocked(MetadataType typeDef)
@@ -1093,7 +1180,7 @@ namespace ILCompiler
                 string internalValue = GetAttribute(nav, "internal");
                 if (!string.IsNullOrEmpty(internalValue))
                 {
-                    if (!IsRemoveAttributeInstances(internalValue) || !nav.IsEmptyElement)
+                    if (!IsRemoveAttributeInstances(internalValue))
                     {
                         LogWarning(nav, DiagnosticId.UnrecognizedInternalAttribute, internalValue);
                     }

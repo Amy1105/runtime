@@ -3,6 +3,7 @@
 
 using System.Buffers;
 using System.Collections.Generic;
+using System.Diagnostics;
 using System.Diagnostics.CodeAnalysis;
 using System.IO;
 using System.Runtime.InteropServices;
@@ -25,6 +26,8 @@ namespace System
 
         private static TimeZoneInfo GetLocalTimeZoneCore()
         {
+            if (Invariant) return Utc;
+
             // Without Registry support, create the TimeZoneInfo from a TZ file
             return GetLocalTimeZoneFromTzFile();
         }
@@ -48,7 +51,7 @@ namespace System
         }
 
         // Bitmap covering the ASCII range. The bits is set for the characters [a-z], [A-Z], [0-9], '/', '-', and '_'.
-        private static byte[] asciiBitmap = new byte[] { 0x00, 0x00, 0x00, 0x00, 0x00, 0xA8, 0xFF, 0x03, 0xFE, 0xFF, 0xFF, 0x87, 0xFE, 0xFF, 0xFF, 0x07 };
+        private static ReadOnlySpan<byte> AsciiBitmap => [0x00, 0x00, 0x00, 0x00, 0x00, 0xA8, 0xFF, 0x03, 0xFE, 0xFF, 0xFF, 0x87, 0xFE, 0xFF, 0xFF, 0x07];
         private static bool IdContainsAnyDisallowedChars(string zoneId)
         {
             for (int i = 0; i < zoneId.Length; i++)
@@ -59,7 +62,7 @@ namespace System
                     return true;
                 }
                 int value = c >> 3;
-                if ((asciiBitmap[value] & (ulong)(1UL << (c - (value << 3)))) == 0)
+                if ((AsciiBitmap[value] & (1 << (c & 7))) == 0)
                 {
                     return true;
                 }
@@ -69,6 +72,8 @@ namespace System
 
         private static TimeZoneInfoResult TryGetTimeZoneFromLocalMachineCore(string id, out TimeZoneInfo? value, out Exception? e)
         {
+            Debug.Assert(!Invariant);
+
             value = null;
             e = null;
 
@@ -78,14 +83,14 @@ namespace System
                 return TimeZoneInfoResult.TimeZoneNotFoundException;
             }
 
-            byte[]? rawData=null;
+            byte[]? rawData = null;
             string timeZoneDirectory = GetTimeZoneDirectory();
             string timeZoneFilePath = Path.Combine(timeZoneDirectory, id);
 
 #if TARGET_WASI || TARGET_BROWSER
             if (UseEmbeddedTzDatabase)
             {
-                if(!TryLoadEmbeddedTzFile(timeZoneFilePath, out rawData))
+                if (!TryLoadEmbeddedTzFile(timeZoneFilePath, out rawData))
                 {
                     e = new FileNotFoundException(id, "Embedded TZ data not found");
                     return TimeZoneInfoResult.TimeZoneNotFoundException;
@@ -147,13 +152,18 @@ namespace System
         /// </remarks>
         private static IEnumerable<string> GetTimeZoneIds()
         {
+            if (Invariant)
+            {
+                return new string[] { "UTC" };
+            }
+
             try
             {
                 var fileName = Path.Combine(GetTimeZoneDirectory(), TimeZoneFileName);
 #if TARGET_WASI || TARGET_BROWSER
                 if (UseEmbeddedTzDatabase)
                 {
-                    if(!TryLoadEmbeddedTzFile(fileName, out var rawData))
+                    if (!TryLoadEmbeddedTzFile(fileName, out var rawData))
                     {
                         return Array.Empty<string>();
                     }
@@ -403,6 +413,8 @@ namespace System
         /// </summary>
         private static string FindTimeZoneId(byte[] rawData)
         {
+            Debug.Assert(!Invariant);
+
             // default to "Local" if we can't find the right tzfile
             string id = LocalId;
             string timeZoneDirectory = GetTimeZoneDirectory();
@@ -443,6 +455,8 @@ namespace System
 
         private static bool TryLoadTzFile(string tzFilePath, [NotNullWhen(true)] ref byte[]? rawData, [NotNullWhen(true)] ref string? id)
         {
+            Debug.Assert(!Invariant);
+
             if (File.Exists(tzFilePath))
             {
                 try
@@ -469,8 +483,10 @@ namespace System
 #if TARGET_WASI || TARGET_BROWSER
         private static bool TryLoadEmbeddedTzFile(string name, [NotNullWhen(true)] out byte[]? rawData)
         {
+            Debug.Assert(!Invariant);
+
             IntPtr bytes = Interop.Sys.GetTimeZoneData(name, out int length);
-            if(bytes == IntPtr.Zero)
+            if (bytes == IntPtr.Zero)
             {
                 rawData = null;
                 return false;
@@ -502,8 +518,11 @@ namespace System
         /// </summary>
         private static bool TryGetLocalTzFile([NotNullWhen(true)] out byte[]? rawData, [NotNullWhen(true)] out string? id)
         {
+            Debug.Assert(!Invariant);
+
             rawData = null;
             id = null;
+
             string? tzVariable = GetTzEnvironmentVariable();
 
             // If the env var is null, on iOS/tvOS, grab the default tz from the device.
@@ -511,7 +530,7 @@ namespace System
 #pragma warning disable IDE0074 // Use compound assignment
             if (tzVariable == null)
             {
-#if TARGET_IOS || TARGET_TVOS
+#if TARGET_MACCATALYST || TARGET_IOS || TARGET_TVOS
                 tzVariable = Interop.Sys.GetDefaultTimeZone();
 #elif TARGET_WASI || TARGET_BROWSER
                 if (UseEmbeddedTzDatabase)
@@ -553,7 +572,7 @@ namespace System
                 {
                     return false;
                 }
-                if(!TryLoadEmbeddedTzFile(tzFilePath, out rawData))
+                if (!TryLoadEmbeddedTzFile(tzFilePath, out rawData))
                 {
                     return false;
                 }
@@ -573,6 +592,8 @@ namespace System
         /// </summary>
         private static TimeZoneInfo GetLocalTimeZoneFromTzFile()
         {
+            Debug.Assert(!Invariant);
+
             byte[]? rawData;
             string? id;
             if (TryGetLocalTzFile(out rawData, out id))
@@ -592,7 +613,7 @@ namespace System
         {
             string? tzDirectory = Environment.GetEnvironmentVariable(TimeZoneDirectoryEnvironmentVariable);
 
-            if (tzDirectory == null)
+            if (string.IsNullOrEmpty(tzDirectory))
             {
                 tzDirectory = DefaultTimeZoneDirectory;
             }

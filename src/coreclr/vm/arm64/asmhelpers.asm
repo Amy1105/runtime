@@ -8,8 +8,9 @@
     IMPORT ExternalMethodFixupWorker
     IMPORT PreStubWorker
     IMPORT NDirectImportWorker
+#ifdef FEATURE_VIRTUAL_STUB_DISPATCH
     IMPORT VSD_ResolveWorker
-    IMPORT JIT_InternalThrow
+#endif
     IMPORT ComPreStubWorker
     IMPORT COMToCLRWorker
     IMPORT CallDescrWorkerUnwindFrameChainHandler
@@ -22,9 +23,12 @@
 #endif
     IMPORT HijackHandler
     IMPORT ThrowControlForThread
+#ifdef FEATURE_INTERPRETER
+    IMPORT ExecuteInterpretedMethod
+#endif
 
 #ifdef FEATURE_USE_SOFTWARE_WRITE_WATCH_FOR_GC_HEAP
-    IMPORT  g_sw_ww_table
+    IMPORT  g_write_watch_table
 #endif
 
 #ifdef FEATURE_MANUALLY_MANAGED_CARD_BUNDLES
@@ -36,7 +40,15 @@
     IMPORT  g_lowest_address
     IMPORT  g_highest_address
     IMPORT  g_card_table
+#ifdef FEATURE_VIRTUAL_STUB_DISPATCH
     IMPORT  g_dispatch_cache_chain_success_counter
+#endif
+    IMPORT  g_pGetGCStaticBase
+    IMPORT  g_pGetNonGCStaticBase
+
+    IMPORT g_pPollGC
+    IMPORT g_TrapReturningThreads
+
 #ifdef WRITE_BARRIER_CHECK
     SETALIAS g_GCShadow, ?g_GCShadow@@3PEAEEA
     SETALIAS g_GCShadowEnd, ?g_GCShadowEnd@@3PEAEEA
@@ -45,9 +57,6 @@
     IMPORT $g_GCShadow
     IMPORT $g_GCShadowEnd
 #endif // WRITE_BARRIER_CHECK
-
-    IMPORT JIT_GetSharedNonGCStaticBase_Helper
-    IMPORT JIT_GetSharedGCStaticBase_Helper
 
 #ifdef FEATURE_COMINTEROP
     IMPORT CLRToCOMWorker
@@ -75,6 +84,12 @@
     LEAF_ENTRY GetDataCacheZeroIDReg
         mrs     x0, dczid_el0
         and     x0, x0, 31
+        ret     lr
+    LEAF_END
+
+;; uint64_t GetSveLengthFromOS(void);
+    LEAF_ENTRY GetSveLengthFromOS
+        rdvl    x0, 1
         ret     lr
     LEAF_END
 
@@ -233,327 +248,6 @@ ThePreStubPatchLabel
         ret             lr
         LEAF_END
 
-;-----------------------------------------------------------------------------
-; The following Macros help in WRITE_BARRIER Implementations
-    ; WRITE_BARRIER_ENTRY
-    ;
-    ; Declare the start of a write barrier function. Use similarly to NESTED_ENTRY. This is the only legal way
-    ; to declare a write barrier function.
-    ;
-    MACRO
-      WRITE_BARRIER_ENTRY $name
-
-      LEAF_ENTRY $name
-    MEND
-
-    ; WRITE_BARRIER_END
-    ;
-    ; The partner to WRITE_BARRIER_ENTRY, used like NESTED_END.
-    ;
-    MACRO
-      WRITE_BARRIER_END $__write_barrier_name
-
-      LEAF_END_MARKED $__write_barrier_name
-
-    MEND
-
-; ------------------------------------------------------------------
-; Start of the writeable code region
-    LEAF_ENTRY JIT_PatchedCodeStart
-        ret      lr
-    LEAF_END
-
-;-----------------------------------------------------------------------------
-; void JIT_UpdateWriteBarrierState(bool skipEphemeralCheck, size_t writeableOffset)
-;
-; Update shadow copies of the various state info required for barrier
-;
-; State info is contained in a literal pool at the end of the function
-; Placed in text section so that it is close enough to use ldr literal and still
-; be relocatable. Eliminates need for PREPARE_EXTERNAL_VAR in hot code.
-;
-; Align and group state info together so it fits in a single cache line
-; and each entry can be written atomically
-;
-    WRITE_BARRIER_ENTRY JIT_UpdateWriteBarrierState
-        PROLOG_SAVE_REG_PAIR   fp, lr, #-16!
-
-        ; x0-x7, x10 will contain intended new state
-        ; x8 will preserve skipEphemeralCheck
-        ; x12 will be used for pointers
-
-        mov      x8, x0
-        mov      x9, x1
-
-        adrp     x12, g_card_table
-        ldr      x0, [x12, g_card_table]
-
-#ifdef FEATURE_MANUALLY_MANAGED_CARD_BUNDLES
-        adrp     x12, g_card_bundle_table
-        ldr      x1, [x12, g_card_bundle_table]
-#endif
-
-#ifdef FEATURE_USE_SOFTWARE_WRITE_WATCH_FOR_GC_HEAP
-        adrp     x12, g_sw_ww_table
-        ldr      x2, [x12, g_sw_ww_table]
-#endif
-
-        adrp     x12, g_ephemeral_low
-        ldr      x3, [x12, g_ephemeral_low]
-
-        adrp     x12, g_ephemeral_high
-        ldr      x4, [x12, g_ephemeral_high]
-
-        ; Check skipEphemeralCheck
-        cbz      x8, EphemeralCheckEnabled
-        movz     x3, #0
-        movn     x4, #0
-
-EphemeralCheckEnabled
-        adrp     x12, g_lowest_address
-        ldr      x5, [x12, g_lowest_address]
-
-        adrp     x12, g_highest_address
-        ldr      x6, [x12, g_highest_address]
-
-#ifdef WRITE_BARRIER_CHECK
-        adrp     x12, $g_GCShadow
-        ldr      x7, [x12, $g_GCShadow]
-
-        adrp     x12, $g_GCShadowEnd
-        ldr      x10, [x12, $g_GCShadowEnd]
-#endif
-
-        ; Update wbs state
-        adrp     x12, JIT_WriteBarrier_Table_Loc
-        ldr      x12, [x12, JIT_WriteBarrier_Table_Loc]
-        add      x12, x12, x9
-        stp      x0, x1, [x12], 16
-        stp      x2, x3, [x12], 16
-        stp      x4, x5, [x12], 16
-        str      x6, [x12], 8
-#ifdef WRITE_BARRIER_CHECK
-        stp     x7, x10, [x12], 16
-#endif
-
-        EPILOG_RESTORE_REG_PAIR fp, lr, #16!
-        EPILOG_RETURN
-
-    WRITE_BARRIER_END JIT_UpdateWriteBarrierState
-
-        ; Begin patchable literal pool
-        ALIGN 64  ; Align to power of two at least as big as patchable literal pool so that it fits optimally in cache line
-    WRITE_BARRIER_ENTRY JIT_WriteBarrier_Table
-wbs_begin
-wbs_card_table
-        DCQ 0
-wbs_card_bundle_table
-        DCQ 0
-wbs_sw_ww_table
-        DCQ 0
-wbs_ephemeral_low
-        DCQ 0
-wbs_ephemeral_high
-        DCQ 0
-wbs_lowest_address
-        DCQ 0
-wbs_highest_address
-        DCQ 0
-#ifdef WRITE_BARRIER_CHECK
-wbs_GCShadow
-        DCQ 0
-wbs_GCShadowEnd
-        DCQ 0
-#endif
-    WRITE_BARRIER_END JIT_WriteBarrier_Table
-
-; void JIT_ByRefWriteBarrier
-; On entry:
-;   x13  : the source address (points to object reference to write)
-;   x14  : the destination address (object reference written here)
-;
-; On exit:
-;   x12  : trashed
-;   x13  : incremented by 8
-;   x14  : incremented by 8
-;   x15  : trashed
-;   x17  : trashed (ip1) if FEATURE_USE_SOFTWARE_WRITE_WATCH_FOR_GC_HEAP
-;
-    WRITE_BARRIER_ENTRY JIT_ByRefWriteBarrier
-
-        ldr      x15, [x13], 8
-        b        JIT_CheckedWriteBarrier
-
-    WRITE_BARRIER_END JIT_ByRefWriteBarrier
-
-;-----------------------------------------------------------------------------
-; Simple WriteBarriers
-; void JIT_CheckedWriteBarrier(Object** dst, Object* src)
-; On entry:
-;   x14  : the destination address (LHS of the assignment)
-;   x15  : the object reference (RHS of the assignment)
-;
-; On exit:
-;   x12  : trashed
-;   x14  : incremented by 8
-;   x15  : trashed
-;   x17  : trashed (ip1) if FEATURE_USE_SOFTWARE_WRITE_WATCH_FOR_GC_HEAP
-;
-    WRITE_BARRIER_ENTRY JIT_CheckedWriteBarrier
-        ldr      x12,  wbs_lowest_address
-        cmp      x14,  x12
-
-        ldr      x12,  wbs_highest_address
-        ccmphs   x14,  x12, #0x2
-        blo      JIT_WriteBarrier
-
-NotInHeap
-        str      x15, [x14], 8
-        ret      lr
-    WRITE_BARRIER_END JIT_CheckedWriteBarrier
-
-; void JIT_WriteBarrier(Object** dst, Object* src)
-; On entry:
-;   x14  : the destination address (LHS of the assignment)
-;   x15  : the object reference (RHS of the assignment)
-;
-; On exit:
-;   x12  : trashed
-;   x14  : incremented by 8
-;   x15  : trashed
-;   x17  : trashed (ip1) if FEATURE_USE_SOFTWARE_WRITE_WATCH_FOR_GC_HEAP
-;
-    WRITE_BARRIER_ENTRY JIT_WriteBarrier
-        stlr     x15, [x14]
-
-#ifdef WRITE_BARRIER_CHECK
-        ; Update GC Shadow Heap
-
-        ; Do not perform the work if g_GCShadow is 0
-        ldr      x12, wbs_GCShadow
-        cbz      x12, ShadowUpdateDisabled
-
-        ; need temporary register. Save before using.
-        str      x13, [sp, #-16]!
-
-        ; Compute address of shadow heap location:
-        ;   pShadow = $g_GCShadow + (x14 - g_lowest_address)
-        ldr      x13, wbs_lowest_address
-        sub      x13, x14, x13
-        add      x12, x13, x12
-
-        ; if (pShadow >= $g_GCShadowEnd) goto end
-        ldr      x13, wbs_GCShadowEnd
-        cmp      x12, x13
-        bhs      ShadowUpdateEnd
-
-        ; *pShadow = x15
-        str      x15, [x12]
-
-        ; Ensure that the write to the shadow heap occurs before the read from the GC heap so that race
-        ; conditions are caught by INVALIDGCVALUE.
-        dmb      ish
-
-        ; if ([x14] == x15) goto end
-        ldr      x13, [x14]
-        cmp      x13, x15
-        beq ShadowUpdateEnd
-
-        ; *pShadow = INVALIDGCVALUE (0xcccccccd)
-        movz     x13, #0xcccd
-        movk     x13, #0xcccc, LSL #16
-        str      x13, [x12]
-
-ShadowUpdateEnd
-        ldr      x13, [sp], #16
-ShadowUpdateDisabled
-#endif
-
-#ifdef FEATURE_USE_SOFTWARE_WRITE_WATCH_FOR_GC_HEAP
-        ; Update the write watch table if necessary
-        ldr      x12,  wbs_sw_ww_table
-        cbz      x12,  CheckCardTable
-        add      x12,  x12, x14, LSR #0xC  // SoftwareWriteWatch::AddressToTableByteIndexShift
-        ldrb     w17,  [x12]
-        cbnz     x17,  CheckCardTable
-        mov      w17,  0xFF
-        strb     w17,  [x12]
-#endif
-
-CheckCardTable
-        ; Branch to Exit if the reference is not in the Gen0 heap
-        ;
-        ldr      x12,  wbs_ephemeral_low
-        cbz      x12,  SkipEphemeralCheck
-        cmp      x15,  x12
-
-        ldr      x12,  wbs_ephemeral_high
-
-        ; Compare against the upper bound if the previous comparison indicated
-        ; that the destination address is greater than or equal to the lower
-        ; bound. Otherwise, set the C flag (specified by the 0x2) so that the
-        ; branch to exit is taken.
-        ccmp     x15,  x12, #0x2, hs
-
-        bhs      Exit
-
-SkipEphemeralCheck
-        ; Check if we need to update the card table
-        ldr      x12, wbs_card_table
-
-        ; x15 := pointer into card table
-        add      x15, x12, x14, lsr #11
-
-        ldrb     w12, [x15]
-        cmp      x12, 0xFF
-        beq      Exit
-
-UpdateCardTable
-        mov      x12, 0xFF
-        strb     w12, [x15]
-
-#ifdef FEATURE_MANUALLY_MANAGED_CARD_BUNDLES
-        ; Check if we need to update the card bundle table
-        ldr      x12, wbs_card_bundle_table
-
-        ; x15 := pointer into card bundle table
-        add      x15, x12, x14, lsr #21
-
-        ldrb     w12, [x15]
-        cmp      x12, 0xFF
-        beq      Exit
-
-        mov      x12, 0xFF
-        strb     w12, [x15]
-#endif
-
-Exit
-        add      x14, x14, 8
-        ret      lr
-    WRITE_BARRIER_END JIT_WriteBarrier
-
-; ------------------------------------------------------------------
-; End of the writeable code region
-    LEAF_ENTRY JIT_PatchedCodeLast
-        ret      lr
-    LEAF_END
-
-; void SinglecastDelegateInvokeStub(Delegate *pThis)
-    LEAF_ENTRY SinglecastDelegateInvokeStub
-        cmp     x0, #0
-        beq     LNullThis
-
-        ldr     x16, [x0, #DelegateObject___methodPtr]
-        ldr     x0, [x0, #DelegateObject___target]
-
-        br      x16
-
-LNullThis
-        mov     x0, #CORINFO_NullReferenceException_ASM
-        b       JIT_InternalThrow
-
-    LEAF_END
-
 #ifdef FEATURE_COMINTEROP
 
 ; ------------------------------------------------------------------
@@ -614,7 +308,7 @@ NoFloatingPointRetVal
     LEAF_END
 
 ; ------------------------------------------------------------------
-; GenericComPlusCallStub that erects a ComPlusMethodFrame and calls into the runtime
+; GenericCLRToCOMCallStub that erects a CLRToCOMMethodFrame and calls into the runtime
 ; (CLRToCOMWorker) to dispatch rare cases of the interface call.
 ;
 ; On entry:
@@ -625,14 +319,14 @@ NoFloatingPointRetVal
 ; On exit:
 ;   x0/x1/s0-s3/d0-d3 set to return value of the call as appropriate
 ;
-    NESTED_ENTRY GenericComPlusCallStub
+    NESTED_ENTRY GenericCLRToCOMCallStub
 
         PROLOG_WITH_TRANSITION_BLOCK ASM_ENREGISTERED_RETURNTYPE_MAXSIZE
 
         add         x0, sp, #__PWTB_TransitionBlock ; pTransitionBlock
         mov         x1, x12                         ; pMethodDesc
 
-        ; Call CLRToCOMWorker(TransitionBlock *, ComPlusCallMethodDesc *).
+        ; Call CLRToCOMWorker(TransitionBlock *, CLRToCOMCallMethodDesc *).
         ; This call will set up the rest of the frame (including the vfptr, the GS cookie and
         ; linking to the thread), make the client call and return with correct registers set
         ; (x0/x1/s0-s3/d0-d3 as appropriate).
@@ -667,7 +361,7 @@ NoFloatingPointRetVal
     GBLA ComCallPreStub_ErrorReturnOffset
     GBLA ComCallPreStub_FirstStackAdjust
 
-ComCallPreStub_FrameSize         SETA (SIZEOF__GSCookie + SIZEOF__ComMethodFrame)
+ComCallPreStub_FrameSize         SETA (SIZEOF__ComMethodFrame)
 ComCallPreStub_FirstStackAdjust  SETA (8 + SIZEOF__ArgumentRegisters + 2 * 8) ; x8, reg args , fp & lr already pushed
 ComCallPreStub_StackAlloc        SETA ComCallPreStub_FrameSize - ComCallPreStub_FirstStackAdjust
 ComCallPreStub_StackAlloc        SETA ComCallPreStub_StackAlloc + SIZEOF__FloatArgumentRegisters + 8; 8 for ErrorReturn
@@ -737,7 +431,7 @@ ComCallPreStub_ErrorExit
     GBLA GenericComCallStub_FrameOffset
     GBLA GenericComCallStub_FirstStackAdjust
 
-GenericComCallStub_FrameSize         SETA (SIZEOF__GSCookie + SIZEOF__ComMethodFrame)
+GenericComCallStub_FrameSize         SETA (SIZEOF__ComMethodFrame)
 GenericComCallStub_FirstStackAdjust  SETA (8 + SIZEOF__ArgumentRegisters + 2 * 8)
 GenericComCallStub_StackAlloc        SETA GenericComCallStub_FrameSize - GenericComCallStub_FirstStackAdjust
 GenericComCallStub_StackAlloc        SETA GenericComCallStub_StackAlloc + SIZEOF__FloatArgumentRegisters
@@ -761,7 +455,7 @@ GenericComCallStub_FirstStackAdjust     SETA GenericComCallStub_FirstStackAdjust
     SAVE_FLOAT_ARGUMENT_REGISTERS  sp, 0
 
     str x12, [sp, #(GenericComCallStub_FrameOffset + UnmanagedToManagedFrame__m_pvDatum)]
-    add x1, sp, #GenericComCallStub_FrameOffset
+    add x0, sp, #GenericComCallStub_FrameOffset
     bl COMToCLRWorker
 
     ; pop the stack
@@ -868,7 +562,7 @@ COMToCLRDispatchHelper_RegSetup
 ; ------------------------------------------------------------------
 ; Hijack function for functions which return a scalar type or a struct (value type)
     NESTED_ENTRY OnHijackTripThread
-    PROLOG_SAVE_REG_PAIR   fp, lr, #-176!
+    PROLOG_SAVE_REG_PAIR   fp, lr, #-192!
     ; Spill callee saved registers
     PROLOG_SAVE_REG_PAIR   x19, x20, #16
     PROLOG_SAVE_REG_PAIR   x21, x22, #32
@@ -879,9 +573,12 @@ COMToCLRDispatchHelper_RegSetup
     ; save any integral return value(s)
     stp x0, x1, [sp, #96]
 
+    ; save async continuation return value
+    str x2, [sp, #112]
+
     ; save any FP/HFA/HVA return value(s)
-    stp q0, q1, [sp, #112]
-    stp q2, q3, [sp, #144]
+    stp q0, q1, [sp, #128]
+    stp q2, q3, [sp, #160]
 
     mov x0, sp
     bl OnHijackWorker
@@ -889,16 +586,19 @@ COMToCLRDispatchHelper_RegSetup
     ; restore any integral return value(s)
     ldp x0, x1, [sp, #96]
 
+    ; restore async continuation return value
+    ldr x2, [sp, #112]
+
     ; restore any FP/HFA/HVA return value(s)
-    ldp q0, q1, [sp, #112]
-    ldp q2, q3, [sp, #144]
+    ldp q0, q1, [sp, #128]
+    ldp q2, q3, [sp, #160]
 
     EPILOG_RESTORE_REG_PAIR   x19, x20, #16
     EPILOG_RESTORE_REG_PAIR   x21, x22, #32
     EPILOG_RESTORE_REG_PAIR   x23, x24, #48
     EPILOG_RESTORE_REG_PAIR   x25, x26, #64
     EPILOG_RESTORE_REG_PAIR   x27, x28, #80
-    EPILOG_RESTORE_REG_PAIR   fp, lr,   #176!
+    EPILOG_RESTORE_REG_PAIR   fp, lr,   #192!
     EPILOG_RETURN
     NESTED_END
 
@@ -931,7 +631,7 @@ COMToCLRDispatchHelper_RegSetup
         ; X3 = address of the location where the SP of funclet's caller (i.e. this helper) should be saved.
         ;
 
-        ; Using below prolog instead of PROLOG_SAVE_REG_PAIR fp,lr, #-16!
+        ; Using below prolog instead of PROLOG_SAVE_REG_PAIR fp,lr, #-96!
         ; is intentional. Above statement would also emit instruction to save
         ; sp in fp. If sp is saved in fp in prolog then it is not expected that fp can change in the body
         ; of method. However, this method needs to be able to change fp before calling funclet.
@@ -970,21 +670,23 @@ COMToCLRDispatchHelper_RegSetup
 
         NESTED_END CallEHFunclet
 
-        ; This helper enables us to call into a filter funclet by passing it the CallerSP to lookup the
-        ; frame pointer for accessing the locals in the parent method.
+        ; This helper enables us to call into a filter funclet after restoring Fp register
         NESTED_ENTRY CallEHFilterFunclet
 
-        PROLOG_SAVE_REG_PAIR   fp, lr, #-16!
+        PROLOG_SAVE_REG_PAIR_NO_FP   fp, lr, #-16!
 
         ; On entry:
         ;
         ; X0 = throwable
-        ; X1 = SP of the caller of the method/funclet containing the filter
+        ; X1 = FP of the main function
         ; X2 = PC to invoke
         ; X3 = address of the location where the SP of funclet's caller (i.e. this helper) should be saved.
         ;
         ; Save the SP of this function
+        mov fp, sp
         str fp, [x3]
+        ; Restore frame pointer
+        mov fp, x1
         ; Invoke the filter funclet
         blr x2
 
@@ -997,8 +699,8 @@ COMToCLRDispatchHelper_RegSetup
         GBLA FaultingExceptionFrame_StackAlloc
         GBLA FaultingExceptionFrame_FrameOffset
 
-FaultingExceptionFrame_StackAlloc         SETA (SIZEOF__GSCookie + SIZEOF__FaultingExceptionFrame)
-FaultingExceptionFrame_FrameOffset        SETA  SIZEOF__GSCookie
+FaultingExceptionFrame_StackAlloc         SETA (SIZEOF__FaultingExceptionFrame)
+FaultingExceptionFrame_FrameOffset        SETA  0
 
         MACRO
         GenerateRedirectedStubWithFrame $STUB, $TARGET
@@ -1069,6 +771,7 @@ FaultingExceptionFrame_FrameOffset        SETA  SIZEOF__GSCookie
 
         GenerateRedirectedStubWithFrame RedirectForThreadAbort, RedirectForThreadAbort2
 
+#ifdef FEATURE_VIRTUAL_STUB_DISPATCH
 ; ------------------------------------------------------------------
 ; ResolveWorkerChainLookupAsmStub
 ;
@@ -1160,6 +863,7 @@ Fail
         EPILOG_BRANCH_REG  x9
 
         NESTED_END
+#endif // FEATURE_VIRTUAL_STUB_DISPATCH
 
 #ifdef FEATURE_READYTORUN
 
@@ -1174,7 +878,6 @@ Fail
     mov x12, x0
 
     EPILOG_WITH_TRANSITION_BLOCK_TAILCALL
-    PATCH_LABEL ExternalMethodFixupPatchLabel
     EPILOG_BRANCH_REG   x12
 
     NESTED_END
@@ -1245,58 +948,42 @@ Fail
 ;
 
 ; ------------------------------------------------------------------
-; void* JIT_GetSharedNonGCStaticBase(SIZE_T moduleDomainID, DWORD dwClassDomainID)
 
-    LEAF_ENTRY JIT_GetSharedNonGCStaticBase_SingleAppDomain
+; void* JIT_GetDynamicNonGCStaticBase(DynamicStaticsInfo *dynamicInfo)
+
+    LEAF_ENTRY JIT_GetDynamicNonGCStaticBase_SingleAppDomain
     ; If class is not initialized, bail to C++ helper
-    add x2, x0, #DomainLocalModule__m_pDataBlob
-    ldrb w2, [x2, w1]
-    tst w2, #1
-    beq CallHelper1
-
+    add x1, x0, #OFFSETOF__DynamicStaticsInfo__m_pNonGCStatics
+    ldar x1, [x1]
+    tbnz x1, #0, CallHelper1
+    mov x0, x1
     ret lr
 
 CallHelper1
-    ; Tail call JIT_GetSharedNonGCStaticBase_Helper
-    b JIT_GetSharedNonGCStaticBase_Helper
+    ; Tail call GetNonGCStaticBase
+    ldr x0, [x0, #OFFSETOF__DynamicStaticsInfo__m_pMethodTable]
+    adrp     x1, g_pGetNonGCStaticBase
+    ldr      x1, [x1, g_pGetNonGCStaticBase]
+    br       x1
     LEAF_END
 
+; void* JIT_GetDynamicGCStaticBase(DynamicStaticsInfo *dynamicInfo)
 
-; ------------------------------------------------------------------
-; void* JIT_GetSharedNonGCStaticBaseNoCtor(SIZE_T moduleDomainID, DWORD dwClassDomainID)
-
-    LEAF_ENTRY JIT_GetSharedNonGCStaticBaseNoCtor_SingleAppDomain
-    ret lr
-    LEAF_END
-
-
-; ------------------------------------------------------------------
-; void* JIT_GetSharedGCStaticBase(SIZE_T moduleDomainID, DWORD dwClassDomainID)
-
-    LEAF_ENTRY JIT_GetSharedGCStaticBase_SingleAppDomain
+    LEAF_ENTRY JIT_GetDynamicGCStaticBase_SingleAppDomain
     ; If class is not initialized, bail to C++ helper
-    add x2, x0, #DomainLocalModule__m_pDataBlob
-    ldrb w2, [x2, w1]
-    tst w2, #1
-    beq CallHelper2
-
-    ldr x0, [x0, #DomainLocalModule__m_pGCStatics]
+    add x1, x0, #OFFSETOF__DynamicStaticsInfo__m_pGCStatics
+    ldar x1, [x1]
+    tbnz x1, #0, CallHelper2
+    mov x0, x1
     ret lr
 
 CallHelper2
-    ; Tail call Jit_GetSharedGCStaticBase_Helper
-    b JIT_GetSharedGCStaticBase_Helper
+    ; Tail call GetGCStaticBase
+    ldr x0, [x0, #OFFSETOF__DynamicStaticsInfo__m_pMethodTable]
+    adrp     x1, g_pGetGCStaticBase
+    ldr      x1, [x1, g_pGetGCStaticBase]
+    br       x1
     LEAF_END
-
-
-; ------------------------------------------------------------------
-; void* JIT_GetSharedGCStaticBaseNoCtor(SIZE_T moduleDomainID, DWORD dwClassDomainID)
-
-    LEAF_ENTRY JIT_GetSharedGCStaticBaseNoCtor_SingleAppDomain
-    ldr x0, [x0, #DomainLocalModule__m_pGCStatics]
-    ret lr
-    LEAF_END
-
 
 ; ------------------------------------------------------------------
 ; __declspec(naked) void F_CALL_CONV JIT_WriteBarrier_Callable(Object **dst, Object* val)
@@ -1391,6 +1078,24 @@ __HelperNakedFuncName SETS "$helper":CC:"Naked"
         EPILOG_BRANCH_REG x9
     NESTED_END
 
+    IMPORT JIT_PatchpointWorkerWorkerWithPolicy
+
+    NESTED_ENTRY JIT_Patchpoint
+        PROLOG_WITH_TRANSITION_BLOCK
+
+        add     x0, sp, #__PWTB_TransitionBlock ; TransitionBlock *
+        bl      JIT_PatchpointWorkerWorkerWithPolicy
+
+        EPILOG_WITH_TRANSITION_BLOCK_RETURN
+    NESTED_END
+
+    // first arg register holds iloffset, which needs to be moved to the second register, and the first register filled with NULL
+    LEAF_ENTRY JIT_PatchpointForced
+        mov x1, x0
+        mov x0, #0
+        b JIT_Patchpoint
+    LEAF_END
+
 #endif ; FEATURE_TIERED_COMPILATION
 
     LEAF_ENTRY  JIT_ValidateIndirectCall
@@ -1400,6 +1105,632 @@ __HelperNakedFuncName SETS "$helper":CC:"Naked"
     LEAF_ENTRY  JIT_DispatchIndirectCall
         br x9
     LEAF_END
+
+#ifdef FEATURE_SPECIAL_USER_MODE_APC
+
+    IMPORT |?ApcActivationCallback@Thread@@CAX_K@Z|
+
+    ; extern "C" void NTAPI ApcActivationCallbackStub(ULONG_PTR Parameter);
+    NESTED_ENTRY ApcActivationCallbackStub
+
+        PROLOG_SAVE_REG_PAIR    fp, lr, #-16!
+        PROLOG_STACK_ALLOC      16                ; stack slot for CONTEXT* and padding
+
+        ;REDIRECTSTUB_SP_OFFSET_CONTEXT is defined in asmconstants.h and is used in GetCONTEXTFromRedirectedStubStackFrame
+        ;If CONTEXT is not saved at 0 offset from SP it must be changed as well.
+        ASSERT REDIRECTSTUB_SP_OFFSET_CONTEXT == 0
+
+        ; Save a copy of the redirect CONTEXT*.
+        ; This is needed for the debugger to unwind the stack.
+        ldr x17, [x0, OFFSETOF__APC_CALLBACK_DATA__ContextRecord]
+        str x17, [sp]
+
+        bl |?ApcActivationCallback@Thread@@CAX_K@Z|
+
+        EPILOG_STACK_FREE       16                ; undo stack slot for CONTEXT* and padding
+        EPILOG_RESTORE_REG_PAIR fp, lr, #16!
+        EPILOG_RETURN
+
+; Put a label here to tell the debugger where the end of this function is.
+    PATCH_LABEL ApcActivationCallbackStubEnd
+    EXPORT ApcActivationCallbackStubEnd
+
+    NESTED_END
+
+#endif ; FEATURE_SPECIAL_USER_MODE_APC
+
+    LEAF_ENTRY  JIT_PollGC
+        ldr     x9, =g_TrapReturningThreads
+        ldr     w9, [x9]
+        cbnz    w9, JIT_PollGCRarePath
+        ret
+JIT_PollGCRarePath
+        ldr     x9, =g_pPollGC
+        ldr     x9, [x9]
+        br x9
+    LEAF_END
+
+;x0 -This pointer
+;x1 -ReturnBuffer
+    LEAF_ENTRY ThisPtrRetBufPrecodeWorker
+        ldr  x12, [METHODDESC_REGISTER, #ThisPtrRetBufPrecodeData__Target]
+        mov  x11, x0     ; Move first arg pointer to temp register
+        mov  x0,  x1     ; Move ret buf arg pointer from location in ABI for return buffer for instance method to location in ABI for return buffer for static method
+        mov  x1, x11     ; Move temp register to first arg register for static method with return buffer
+        EPILOG_BRANCH_REG x12
+    LEAF_END
+
+#ifdef FEATURE_INTERPRETER
+
+    NESTED_ENTRY InterpreterStub
+
+        PROLOG_WITH_TRANSITION_BLOCK
+
+        add         x0, sp, #__PWTB_TransitionBlock ; pTransitionBlock
+        mov         x1, METHODDESC_REGISTER         ; pMethodDesc
+
+        bl          ExecuteInterpretedMethod
+
+        EPILOG_WITH_TRANSITION_BLOCK_RETURN
+
+    NESTED_END
+
+    ; Copy arguments from the interpreter stack to the processor stack
+    ; The CPU stack slots are aligned to pointer size.
+    LEAF_ENTRY Load_Stack
+        ldr w14, [x10], #4 ; SP offset
+        ldr w12, [x10], #4 ; number of stack slots
+        add x14, sp, x14
+CopyLoop
+        ldr x13, [x9], #8
+        str x13, [x14], #8
+        subs x12, x12, #8
+        bne CopyLoop
+        ldr x11, [x10], #8
+        EPILOG_BRANCH_REG x11
+    LEAF_END Load_Stack
+
+    ; Routines for passing value type arguments by reference in general purpose registers X0..X7
+
+    LEAF_ENTRY Load_Ref_X0
+        mov x0, x9
+        ldr x12, [x10], #8
+        add x9, x9, x12
+        ldr x11, [x10], #8
+        EPILOG_BRANCH_REG x11
+    LEAF_END Load_X0
+
+    LEAF_ENTRY Load_Ref_X1
+        mov x1, x9
+        ldr x12, [x10], #8
+        add x9, x9, x12
+        ldr x11, [x10], #8
+        EPILOG_BRANCH_REG x11
+    LEAF_END Load_X1
+
+    LEAF_ENTRY Load_Ref_X2
+        mov x2, x9
+        ldr x12, [x10], #8
+        add x9, x9, x12
+        ldr x11, [x10], #8
+        EPILOG_BRANCH_REG x11
+    LEAF_END Load_Ref_X2
+
+    LEAF_ENTRY Load_Ref_X3
+        mov x3, x9
+        ldr x12, [x10], #8
+        add x9, x9, x12
+        ldr x11, [x10], #8
+        EPILOG_BRANCH_REG x11
+    LEAF_END Load_Ref_X3
+
+    LEAF_ENTRY Load_Ref_X4
+        mov x4, x9
+        ldr x12, [x10], #8
+        add x9, x9, x12
+        ldr x11, [x10], #8
+        EPILOG_BRANCH_REG x11
+    LEAF_END Load_Ref_X4
+
+    LEAF_ENTRY Load_Ref_X5
+        mov x5, x9
+        ldr x12, [x10], #8
+        add x9, x9, x12
+        ldr x11, [x10], #8
+        EPILOG_BRANCH_REG x11
+    LEAF_END Load_Ref_X5
+
+    LEAF_ENTRY Load_Ref_X6
+        mov x6, x9
+        ldr x12, [x10], #8
+        add x9, x9, x12
+        ldr x11, [x10], #8
+        EPILOG_BRANCH_REG x11
+    LEAF_END Load_Ref_X6
+
+    LEAF_ENTRY Load_Ref_X7
+        mov x7, x9
+        ldr x12, [x10], #8
+        add x9, x9, x12
+        ldr x11, [x10], #8
+        EPILOG_BRANCH_REG x11
+    LEAF_END Load_Ref_X7
+
+    ; Routines for passing arguments by value in general purpose registers X0..X7
+
+    LEAF_ENTRY Load_X0
+        ldr x0, [x9], #8
+        ldr x11, [x10], #8
+        EPILOG_BRANCH_REG x11
+    LEAF_END Load_X0
+
+    LEAF_ENTRY Load_X0_X1
+        ldp x0, x1, [x9], #16
+        ldr x11, [x10], #8
+        EPILOG_BRANCH_REG x11
+    LEAF_END Load_X0_X1
+
+    LEAF_ENTRY Load_X0_X1_X2
+        ldp x0, x1, [x9], #16
+    ALTERNATE_ENTRY Load_X2
+        ldr x2, [x9], #8
+        ldr x11, [x10], #8
+        EPILOG_BRANCH_REG x11
+    LEAF_END Load_X0_X1_X2
+
+    LEAF_ENTRY Load_X0_X1_X2_X3
+        ldp x0, x1, [x9], #16
+    ALTERNATE_ENTRY Load_X2_X3
+        ldp x2, x3, [x9], #16
+        ldr x11, [x10], #8
+        EPILOG_BRANCH_REG x11
+    LEAF_END Load_X0_X1_X2_X3
+
+    LEAF_ENTRY Load_X0_X1_X2_X3_X4
+        ldp x0, x1, [x9], #16
+    ALTERNATE_ENTRY Load_X2_X3_X4
+        ldp x2, x3, [x9], #16
+    ALTERNATE_ENTRY Load_X4
+        ldr x4, [x9], #8
+        ldr x11, [x10], #8
+        EPILOG_BRANCH_REG x11
+    LEAF_END Load_X0_X1_X2_X3_X4
+
+    LEAF_ENTRY Load_X0_X1_X2_X3_X4_X5
+        ldp x0, x1, [x9], #16
+    ALTERNATE_ENTRY Load_X2_X3_X4_X5
+        ldp x2, x3, [x9], #16
+    ALTERNATE_ENTRY Load_X4_X5
+        ldp x4, x5, [x9], #16
+        ldr x11, [x10], #8
+        EPILOG_BRANCH_REG x11
+    LEAF_END Load_X0_X1_X2_X3_X4_X5
+
+    LEAF_ENTRY Load_X0_X1_X2_X3_X4_X5_X6
+        ldp x0, x1, [x9], #16
+    ALTERNATE_ENTRY Load_X2_X3_X4_X5_X6
+        ldp x2, x3, [x9], #16
+    ALTERNATE_ENTRY Load_X4_X5_X6
+        ldp x4, x5, [x9], #16
+    ALTERNATE_ENTRY Load_X6
+        ldr x6, [x9], #8
+        ldr x11, [x10], #8
+        EPILOG_BRANCH_REG x11
+    LEAF_END Load_X0_X1_X2_X3_X4_X5_X6
+
+    LEAF_ENTRY Load_X0_X1_X2_X3_X4_X5_X6_X7
+        ldp x0, x1, [x9], #16
+    ALTERNATE_ENTRY Load_X2_X3_X4_X5_X6_X7
+        ldp x2, x3, [x9], #16
+    ALTERNATE_ENTRY Load_X4_X5_X6_X7
+        ldp x4, x5, [x9], #16
+    ALTERNATE_ENTRY Load_X6_X7
+        ldp x6, x7, [x9], #16
+        ldr x11, [x10], #8
+        EPILOG_BRANCH_REG x11
+    LEAF_END Load_X0_X1_X2_X3_X4_X5_X6_X7
+
+    LEAF_ENTRY Load_X1
+        ldr x1, [x9], #8
+        ldr x11, [x10], #8
+        EPILOG_BRANCH_REG x11
+    LEAF_END Load_X1
+
+    LEAF_ENTRY Load_X1_X2
+        ldp x1, x2, [x9], #16
+        ldr x11, [x10], #8
+        EPILOG_BRANCH_REG x11
+    LEAF_END Load_X1_X2
+
+    LEAF_ENTRY Load_X1_X2_X3
+        ldp x1, x2, [x9], #16
+    ALTERNATE_ENTRY Load_X3
+        ldr x3, [x9], #8
+        ldr x11, [x10], #8
+        EPILOG_BRANCH_REG x11
+    LEAF_END Load_X1_X2_X3
+
+    LEAF_ENTRY Load_X1_X2_X3_X4
+        ldp x1, x2, [x9], #16
+    ALTERNATE_ENTRY Load_X3_X4
+        ldp x3, x4, [x9], #16
+        ldr x11, [x10], #8
+        EPILOG_BRANCH_REG x11
+    LEAF_END Load_X1_X2_X3_X4
+
+    LEAF_ENTRY Load_X1_X2_X3_X4_X5
+        ldp x1, x2, [x9], #16
+    ALTERNATE_ENTRY Load_X3_X4_X5
+        ldp x3, x4, [x9], #16
+    ALTERNATE_ENTRY Load_X5
+        ldr x5, [x9], #8
+        ldr x11, [x10], #8
+        EPILOG_BRANCH_REG x11
+    LEAF_END Load_X1_X2_X3_X4_X5
+
+    LEAF_ENTRY Load_X1_X2_X3_X4_X5_X6
+        ldp x1, x2, [x9], #16
+    ALTERNATE_ENTRY Load_X3_X4_X5_X6
+        ldp x3, x4, [x9], #16
+    ALTERNATE_ENTRY Load_X5_X6
+        ldp x5, x6, [x9], #16
+        ldr x11, [x10], #8
+        EPILOG_BRANCH_REG x11
+    LEAF_END Load_X1_X2_X3_X4_X5_X6
+
+    LEAF_ENTRY Load_X1_X2_X3_X4_X5_X6_X7
+        ldp x1, x2, [x9], #16
+    ALTERNATE_ENTRY Load_X3_X4_X5_X6_X7
+        ldp x3, x4, [x9], #16
+    ALTERNATE_ENTRY Load_X5_X6_X7
+        ldp x5, x6, [x9], #16
+    ALTERNATE_ENTRY Load_X7
+        ldr x7, [x9], #8
+        ldr x11, [x10], #8
+        EPILOG_BRANCH_REG x11
+    LEAF_END Load_X1_X2_X3_X4_X5_X6_X7
+
+    ; Routines for passing arguments in floating point registers D0..D7
+
+    LEAF_ENTRY Load_D0
+        ldr d0, [x9], #8
+        ldr x11, [x10], #8
+        EPILOG_BRANCH_REG x11
+    LEAF_END Load_D0
+
+    LEAF_ENTRY Load_D1
+        ldr d1, [x9], #8
+        ldr x11, [x10], #8
+        EPILOG_BRANCH_REG x11
+    LEAF_END Load_D1
+
+    LEAF_ENTRY Load_D0_D1
+        ldp d0, d1, [x9], #16
+        ldr x11, [x10], #8
+        EPILOG_BRANCH_REG x11
+    LEAF_END Load_D0_D1
+
+    LEAF_ENTRY Load_D0_D1_D2
+        ldr d0, [x9], #8
+    ALTERNATE_ENTRY Load_D1_D2
+        ldr d1, [x9], #8
+    ALTERNATE_ENTRY Load_D2
+        ldr d2, [x9], #8
+        ldr x11, [x10], #8
+        EPILOG_BRANCH_REG x11
+    LEAF_END Load_D0_D1_D2
+
+    LEAF_ENTRY Load_D0_D1_D2_D3
+        ldr d0, [x9], #8
+    ALTERNATE_ENTRY Load_D1_D2_D3
+        ldr d1, [x9], #8
+    ALTERNATE_ENTRY Load_D2_D3
+        ldr d2, [x9], #8
+    ALTERNATE_ENTRY Load_D3
+        ldr d3, [x9], #8
+        ldr x11, [x10], #8
+        EPILOG_BRANCH_REG x11
+    LEAF_END Load_D0_D1_D2_D3
+
+    LEAF_ENTRY Load_D0_D1_D2_D3_D4
+        ldr d0, [x9], #8
+    ALTERNATE_ENTRY Load_D1_D2_D3_D4
+        ldr d1, [x9], #8
+    ALTERNATE_ENTRY Load_D2_D3_D4
+        ldr d2, [x9], #8
+    ALTERNATE_ENTRY Load_D3_D4
+        ldr d3, [x9], #8
+    ALTERNATE_ENTRY Load_D4
+        ldr d4, [x9], #8
+        ldr x11, [x10], #8
+        EPILOG_BRANCH_REG x11
+    LEAF_END Load_D0_D1_D2_D3_D4
+
+    LEAF_ENTRY Load_D0_D1_D2_D3_D4_D5
+        ldr d0, [x9], #8
+    ALTERNATE_ENTRY Load_D1_D2_D3_D4_D5
+        ldr d1, [x9], #8
+    ALTERNATE_ENTRY Load_D2_D3_D4_D5
+        ldr d2, [x9], #8
+    ALTERNATE_ENTRY Load_D3_D4_D5
+        ldr d3, [x9], #8
+    ALTERNATE_ENTRY Load_D4_D5
+        ldr d4, [x9], #8
+    ALTERNATE_ENTRY Load_D5
+        ldr d5, [x9], #8
+        ldr x11, [x10], #8
+        EPILOG_BRANCH_REG x11
+    LEAF_END Load_D0_D1_D2_D3_D4_D5
+
+    LEAF_ENTRY Load_D0_D1_D2_D3_D4_D5_D6
+        ldr d0, [x9], #8
+    ALTERNATE_ENTRY Load_D1_D2_D3_D4_D5_D6
+        ldr d1, [x9], #8
+    ALTERNATE_ENTRY Load_D2_D3_D4_D5_D6
+        ldr d2, [x9], #8
+    ALTERNATE_ENTRY Load_D3_D4_D5_D6
+        ldr d3, [x9], #8
+    ALTERNATE_ENTRY Load_D4_D5_D6
+        ldr d4, [x9], #8
+    ALTERNATE_ENTRY Load_D5_D6
+        ldr d5, [x9], #8
+    ALTERNATE_ENTRY Load_D6
+        ldr d6, [x9], #8
+        ldr x11, [x10], #8
+        EPILOG_BRANCH_REG x11
+    LEAF_END Load_D0_D1_D2_D3_D4_D5_D6
+
+    LEAF_ENTRY Load_D0_D1_D2_D3_D4_D5_D6_D7
+        ldp d0, d1, [x9], #16
+    ALTERNATE_ENTRY Load_D2_D3_D4_D5_D6_D7
+        ldp d2, d3, [x9], #16
+    ALTERNATE_ENTRY Load_D4_D5_D6_D7
+        ldp d4, d5, [x9], #16
+    ALTERNATE_ENTRY Load_D6_D7
+        ldp d6, d7, [x9], #16
+        ldr x11, [x10], #8
+        EPILOG_BRANCH_REG x11
+    LEAF_END Load_D0_D1_D2_D3_D4_D5_D6_D7
+
+    LEAF_ENTRY Load_D1_D2_D3_D4_D5_D6_D7
+        ldp d1, d2, [x9], #16
+    ALTERNATE_ENTRY Load_D3_D4_D5_D6_D7
+        ldp d3, d4, [x9], #16
+    ALTERNATE_ENTRY Load_D5_D6_D7
+        ldp d5, d6, [x9], #16
+    ALTERNATE_ENTRY Load_D7
+        ldr d7, [x9], #8
+        ldr x11, [x10], #8
+        EPILOG_BRANCH_REG x11
+    LEAF_END Load_D0_D1_D2_D3_D4_D5_D6_D7
+
+    ; X0 - routines array
+    ; X1 - interpreter stack args location
+    ; X2 - stack arguments size (properly aligned)
+    NESTED_ENTRY CallJittedMethodRetVoid
+        PROLOG_SAVE_REG_PAIR fp, lr, #-16!
+        sub sp, sp, x3
+        mov x10, x0
+        mov x9, x1
+        ldr x11, [x10], #8
+        blr x11
+        EPILOG_STACK_RESTORE
+        EPILOG_RESTORE_REG_PAIR fp, lr, #16!
+        ret lr
+    NESTED_END CallJittedMethodRetVoid
+
+    ; X0 - routines array
+    ; X1 - interpreter stack args location
+    ; X2 - interpreter stack return value location
+    ; X3 - stack arguments size (properly aligned)
+    NESTED_ENTRY CallJittedMethodRetBuff
+        PROLOG_SAVE_REG_PAIR fp, lr, #-16!
+        sub sp, sp, x3
+        mov x10, x0
+        mov x9, x1
+        mov x8, x2
+        ldr x11, [x10], #8
+        blr x11
+        EPILOG_STACK_RESTORE
+        EPILOG_RESTORE_REG_PAIR fp, lr, #16!
+        EPILOG_RETURN
+    NESTED_END CallJittedMethodRetBuff
+
+    ; X0 - routines array
+    ; X1 - interpreter stack args location
+    ; X2 - interpreter stack return value location
+    ; X3 - stack arguments size (properly aligned)
+    NESTED_ENTRY CallJittedMethodRetI8
+        PROLOG_SAVE_REG_PAIR fp, lr, #-32!
+        str x2, [sp, #16]
+        sub sp, sp, x3
+        mov x10, x0
+        mov x9, x1
+        ldr x11, [x10], #8
+        blr x11
+        ldr x2, [sp, #16]
+        str x0, [x2]
+        EPILOG_STACK_RESTORE
+        EPILOG_RESTORE_REG_PAIR fp, lr, #32!
+        EPILOG_RETURN
+    NESTED_END CallJittedMethodRetI8
+
+    ; X0 - routines array
+    ; X1 - interpreter stack args location
+    ; X2 - interpreter stack return value location
+    ; X3 - stack arguments size (properly aligned)
+    NESTED_ENTRY CallJittedMethodRet2I8
+        PROLOG_SAVE_REG_PAIR fp, lr, #-32!
+        str x2, [sp, #16]
+        sub sp, sp, x3
+        mov x10, x0
+        mov x9, x1
+        ldr x11, [x10], #8
+        blr x11
+        ldr x2, [sp, #16]
+        stp x0, x1, [x2]
+        EPILOG_STACK_RESTORE
+        EPILOG_RESTORE_REG_PAIR fp, lr, #32!
+        EPILOG_RETURN
+    NESTED_END CallJittedMethodRet2I8
+
+    ; X0 - routines array
+    ; X1 - interpreter stack args location
+    ; X2 - interpreter stack return value location
+    ; X3 - stack arguments size (properly aligned)
+    NESTED_ENTRY CallJittedMethodRetDouble
+        PROLOG_SAVE_REG_PAIR fp, lr, #-32!
+        str x2, [sp, #16]
+        sub sp, sp, x3
+        mov x10, x0
+        mov x9, x1
+        ldr x11, [x10], #8
+        blr x11
+        ldr x2, [sp, #16]
+        str d0, [x2]
+        EPILOG_STACK_RESTORE
+        EPILOG_RESTORE_REG_PAIR fp, lr, #32!
+        EPILOG_RETURN
+    NESTED_END CallJittedMethodRetDouble
+
+    ; X0 - routines array
+    ; X1 - interpreter stack args location
+    ; X2 - interpreter stack return value location
+    ; X3 - stack arguments size (properly aligned)
+    NESTED_ENTRY CallJittedMethodRet2Double
+        PROLOG_SAVE_REG_PAIR fp, lr, #-32!
+        str x2, [sp, #16]
+        sub sp, sp, x3
+        mov x10, x0
+        mov x9, x1
+        ldr x11, [x10], #8
+        blr x11
+        ldr x2, [sp, #16]
+        stp d0, d1, [x2]
+        EPILOG_STACK_RESTORE
+        EPILOG_RESTORE_REG_PAIR fp, lr, #32!
+        EPILOG_RETURN
+    NESTED_END CallJittedMethodRet2Double
+
+    ; X0 - routines array
+    ; X1 - interpreter stack args location
+    ; X2 - interpreter stack return value location
+    ; X3 - stack arguments size (properly aligned)
+    NESTED_ENTRY CallJittedMethodRet3Double
+        PROLOG_SAVE_REG_PAIR fp, lr, #-32!
+        str x2, [sp, #16]
+        sub sp, sp, x3
+        mov x10, x0
+        mov x9, x1
+        ldr x11, [x10], #8
+        blr x11
+        ldr x2, [sp, #16]
+        stp d0, d1, [x2], #16
+        str d2, [x2]
+        EPILOG_STACK_RESTORE
+        EPILOG_RESTORE_REG_PAIR fp, lr, #32!
+        EPILOG_RETURN
+    NESTED_END CallJittedMethodRet3Double
+
+    ; X0 - routines array
+    ; X1 - interpreter stack args location
+    ; X2 - interpreter stack return value location
+    ; X3 - stack arguments size (properly aligned)
+    NESTED_ENTRY CallJittedMethodRet4Double
+        PROLOG_SAVE_REG_PAIR fp, lr, #-32!
+        str x2, [sp, #16]
+        sub sp, sp, x3
+        mov x10, x0
+        mov x9, x1
+        ldr x11, [x10], #8
+        blr x11
+        ldr x2, [sp, #16]
+        stp d0, d1, [x2], #16
+        stp d2, d3, [x2]
+        EPILOG_STACK_RESTORE
+        EPILOG_RESTORE_REG_PAIR fp, lr, #32!
+        EPILOG_RETURN
+    NESTED_END CallJittedMethodRet4Double
+
+    ; X0 - routines array
+    ; X1 - interpreter stack args location
+    ; X2 - interpreter stack return value location
+    ; X3 - stack arguments size (properly aligned)
+    NESTED_ENTRY CallJittedMethodRetFloat
+        PROLOG_SAVE_REG_PAIR fp, lr, #-32!
+        str x2, [sp, #16]
+        sub sp, sp, x3
+        mov x10, x0
+        mov x9, x1
+        ldr x11, [x10], #8
+        blr x11
+        ldr x2, [sp, #16]
+        str s0, [x2]
+        EPILOG_STACK_RESTORE
+        EPILOG_RESTORE_REG_PAIR fp, lr, #32!
+        EPILOG_RETURN
+    NESTED_END CallJittedMethodRetFloat
+
+    ; X0 - routines array
+    ; X1 - interpreter stack args location
+    ; X2 - interpreter stack return value location
+    ; X3 - stack arguments size (properly aligned)
+    NESTED_ENTRY CallJittedMethodRet2Float
+        PROLOG_SAVE_REG_PAIR fp, lr, #-32!
+        str x2, [sp, #16]
+        sub sp, sp, x3
+        mov x10, x0
+        mov x9, x1
+        ldr x11, [x10], #8
+        blr x11
+        ldr x2, [sp, #16]
+        stp s0, s1, [x2]
+        EPILOG_STACK_RESTORE
+        EPILOG_RESTORE_REG_PAIR fp, lr, #32!
+        EPILOG_RETURN
+    NESTED_END CallJittedMethodRet2Float
+
+    ; X0 - routines array
+    ; X1 - interpreter stack args location
+    ; X2 - interpreter stack return value location
+    ; X3 - stack arguments size (properly aligned)
+    NESTED_ENTRY CallJittedMethodRet3Float
+        PROLOG_SAVE_REG_PAIR fp, lr, #-32!
+        str x2, [sp, #16]
+        sub sp, sp, x3
+        mov x10, x0
+        mov x9, x1
+        ldr x11, [x10], #8
+        blr x11
+        ldr x2, [sp, #16]
+        stp s0, s1, [x2], #8
+        str s2, [x2]
+        EPILOG_STACK_RESTORE
+        EPILOG_RESTORE_REG_PAIR fp, lr, #32!
+        EPILOG_RETURN
+    NESTED_END CallJittedMethodRet3Float
+
+    ; X0 - routines array
+    ; X1 - interpreter stack args location
+    ; X2 - interpreter stack return value location
+    ; X3 - stack arguments size (properly aligned)
+    NESTED_ENTRY CallJittedMethodRet4Float
+        PROLOG_SAVE_REG_PAIR fp, lr, #-32!
+        str x2, [sp, #16]
+        sub sp, sp, x3
+        mov x10, x0
+        mov x9, x1
+        ldr x11, [x10], #8
+        blr x11
+        ldr x2, [sp, #16]
+        stp s0, s1, [x2], #8
+        stp s2, s3, [x2]
+        EPILOG_STACK_RESTORE
+        EPILOG_RESTORE_REG_PAIR fp, lr, #32!
+        EPILOG_RETURN
+    NESTED_END CallJittedMethodRet4Float
+
+#endif // FEATURE_INTERPRETER
 
 ; Must be at very end of file
     END

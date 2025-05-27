@@ -13,6 +13,7 @@ namespace ILCompiler.Reflection.ReadyToRun.x86
         const uint byref_OFFSET_FLAG = 0x1;
 
         public InfoHdrSmall Header { get; set; }
+        public NoGcRegionTable NoGCRegions { get; set; }
         public GcSlotTable SlotTable { get; set; }
 
         public GcInfo() { }
@@ -20,13 +21,15 @@ namespace ILCompiler.Reflection.ReadyToRun.x86
         /// <summary>
         /// based on <a href="https://github.com/dotnet/runtime/blob/main/src/coreclr/gcdump/i386/gcdumpx86.cpp">GCDump::DumpGCTable</a>
         /// </summary>
-        public GcInfo(byte[] image, int offset, Machine machine, ushort majorVersion)
+        public GcInfo(byte[] image, int offset)
         {
             Offset = offset;
 
             CodeLength = (int)NativeReader.DecodeUnsignedGc(image, ref offset);
 
             Header = InfoHdrDecoder.DecodeHeader(image, ref offset, CodeLength);
+
+            NoGCRegions = new NoGcRegionTable(image, Header, ref offset);
 
             SlotTable = new GcSlotTable(image, Header, ref offset);
 
@@ -54,6 +57,7 @@ namespace ILCompiler.Reflection.ReadyToRun.x86
             sb.AppendLine($"    CodeLength: {CodeLength} bytes");
             sb.AppendLine($"    InfoHdr:");
             sb.AppendLine($"{Header}");
+            sb.AppendLine($"{NoGCRegions}");
             sb.AppendLine($"{SlotTable}");
 
             sb.AppendLine($"    Size: {Size} bytes");

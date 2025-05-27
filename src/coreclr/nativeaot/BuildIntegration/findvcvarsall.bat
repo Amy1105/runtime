@@ -15,7 +15,6 @@ IF /I "%~1"=="arm64" SET toolsSuffix=ARM64
 FOR /F "tokens=*" %%i IN (
     '"%vswherePath%" -latest -prerelease -products * ^
     -requires Microsoft.VisualStudio.Component.VC.Tools.%toolsSuffix% ^
-    -version [16^,18^) ^
     -property installationPath'
 ) DO SET vsBase=%%i
 
@@ -32,6 +31,9 @@ IF /I "%~1"=="x64" (
 IF /I "%~1"=="arm64" (
     SET vcEnvironment=x86_arm64
     IF /I "%procArch%"=="AMD64" SET vcEnvironment=amd64_arm64
+)
+IF /I "%~1"=="x86" (
+    IF /I "%procArch%"=="AMD64" SET vcEnvironment=amd64_x86
 )
 
 CALL "%vsBase%\vc\Auxiliary\Build\vcvarsall.bat" %vcEnvironment% > NUL

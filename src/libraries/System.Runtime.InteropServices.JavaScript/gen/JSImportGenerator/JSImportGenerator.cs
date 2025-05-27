@@ -2,14 +2,17 @@
 // The .NET Foundation licenses this file to you under the MIT license.
 
 using System;
+using System.Collections.Generic;
 using System.Collections.Immutable;
 using System.Diagnostics;
 using System.Linq;
+using System.Runtime.InteropServices.JavaScript;
 using System.Threading;
 using Microsoft.CodeAnalysis;
 using Microsoft.CodeAnalysis.CSharp;
 using Microsoft.CodeAnalysis.CSharp.Syntax;
 using static Microsoft.CodeAnalysis.CSharp.SyntaxFactory;
+using static Microsoft.Interop.SyntaxFactoryExtensions;
 
 [assembly: System.Resources.NeutralResourcesLanguage("en-US")]
 
@@ -24,7 +27,6 @@ namespace Microsoft.Interop.JavaScript
             ContainingSyntax StubMethodSyntaxTemplate,
             MethodSignatureDiagnosticLocations DiagnosticLocation,
             JSImportData JSImportData,
-            MarshallingGeneratorFactoryKey<(TargetFramework TargetFramework, Version TargetFrameworkVersion, JSGeneratorOptions)> GeneratorFactoryKey,
             SequenceEqualImmutableArray<DiagnosticInfo> Diagnostics);
 
         public static class StepNames
@@ -57,10 +59,6 @@ namespace Microsoft.Interop.JavaScript
                 context.ReportDiagnostic(invalidMethod.Diagnostic);
             });
 
-            // Compute generator options
-            IncrementalValueProvider<JSGeneratorOptions> stubOptions = context.AnalyzerConfigOptionsProvider
-                .Select(static (options, ct) => new JSGeneratorOptions(options.GlobalOptions));
-
             IncrementalValueProvider<StubEnvironment> stubEnvironment = context.CreateStubEnvironmentProvider();
 
             // Validate environment that is being used to generate stubs.
@@ -77,21 +75,18 @@ namespace Microsoft.Interop.JavaScript
 
             IncrementalValuesProvider<(MemberDeclarationSyntax, ImmutableArray<DiagnosticInfo>)> generateSingleStub = methodsToGenerate
                 .Combine(stubEnvironment)
-                .Combine(stubOptions)
                 .Select(static (data, ct) => new
                 {
-                    data.Left.Left.Syntax,
-                    data.Left.Left.Symbol,
-                    Environment = data.Left.Right,
-                    Options = data.Right
+                    data.Left.Syntax,
+                    data.Left.Symbol,
+                    Environment = data.Right,
                 })
                 .Select(
-                    static (data, ct) => CalculateStubInformation(data.Syntax, data.Symbol, data.Environment, data.Options, ct)
+                    static (data, ct) => CalculateStubInformation(data.Syntax, data.Symbol, data.Environment, ct)
                 )
                 .WithTrackingName(StepNames.CalculateStubInformation)
-                .Combine(stubOptions)
                 .Select(
-                    static (data, ct) => GenerateSource(data.Left)
+                    static (data, ct) => GenerateSource(data)
                 )
                 .WithComparer(Comparers.GeneratedSyntax)
                 .WithTrackingName(StepNames.GenerateSingleStub);
@@ -128,9 +123,7 @@ namespace Microsoft.Interop.JavaScript
 
             FieldDeclarationSyntax sigField = FieldDeclaration(VariableDeclaration(IdentifierName(Constants.JSFunctionSignatureGlobal))
                 .WithVariables(SingletonSeparatedList(VariableDeclarator(Identifier(stub.BindingName)))))
-                .AddModifiers(Token(SyntaxKind.StaticKeyword))
-                .WithAttributeLists(SingletonList(AttributeList(SingletonSeparatedList(
-                    Attribute(IdentifierName(Constants.ThreadStaticGlobal))))));
+                .AddModifiers(Token(SyntaxKind.StaticKeyword));
 
             MemberDeclarationSyntax toPrint = containingSyntaxContext.WrapMembersInContainingSyntaxWithUnsafeModifier(stubMethod, sigField);
             return toPrint;
@@ -160,7 +153,6 @@ namespace Microsoft.Interop.JavaScript
             MethodDeclarationSyntax originalSyntax,
             IMethodSymbol symbol,
             StubEnvironment environment,
-            JSGeneratorOptions options,
             CancellationToken ct)
         {
             ct.ThrowIfCancellationRequested();
@@ -201,15 +193,7 @@ namespace Microsoft.Interop.JavaScript
                 methodSyntaxTemplate,
                 locations,
                 jsImportData,
-                CreateGeneratorFactory(environment, options),
                 new SequenceEqualImmutableArray<DiagnosticInfo>(generatorDiagnostics.Diagnostics.ToImmutableArray()));
-        }
-
-        private static MarshallingGeneratorFactoryKey<(TargetFramework, Version, JSGeneratorOptions)> CreateGeneratorFactory(StubEnvironment env, JSGeneratorOptions options)
-        {
-            JSGeneratorFactory jsGeneratorFactory = new JSGeneratorFactory();
-
-            return MarshallingGeneratorFactoryKey.Create((env.TargetFramework, env.TargetFrameworkVersion, options), jsGeneratorFactory);
         }
 
         private static (MemberDeclarationSyntax, ImmutableArray<DiagnosticInfo>) GenerateSource(
@@ -217,19 +201,162 @@ namespace Microsoft.Interop.JavaScript
         {
             var diagnostics = new GeneratorDiagnosticsBag(new DescriptorProvider(), incrementalContext.DiagnosticLocation, SR.ResourceManager, typeof(FxResources.Microsoft.Interop.JavaScript.JSImportGenerator.SR));
 
+            // We need to add the implicit exception and return arguments to the signature and ensure they are initialized before we start to do any marshalling.
+            const int NumImplicitArguments = 2;
+
+            ImmutableArray<TypePositionInfo> originalElementInfo = incrementalContext.SignatureContext.SignatureContext.ElementTypeInformation;
+
+            ImmutableArray<TypePositionInfo>.Builder typeInfoBuilder = ImmutableArray.CreateBuilder<TypePositionInfo>(originalElementInfo.Length + NumImplicitArguments);
+
+            TypePositionInfo nativeOnlyParameterTemplate = new TypePositionInfo(
+                SpecialTypeInfo.Void,
+                new JSMarshallingInfo(
+                    NoMarshallingInfo.Instance,
+                    new JSInvalidTypeInfo()))
+            {
+                ManagedIndex = TypePositionInfo.UnsetIndex,
+            };
+
+            typeInfoBuilder.Add(
+                // Add the exception argument
+                nativeOnlyParameterTemplate with
+                {
+                    InstanceIdentifier = Constants.ArgumentException,
+                    NativeIndex = 0,
+                });
+
+            typeInfoBuilder.Add(
+                // Add the incoming return argument
+                nativeOnlyParameterTemplate with
+                {
+                    InstanceIdentifier = Constants.ArgumentReturn,
+                    NativeIndex = 1,
+                });
+
+            bool hasReturn = false;
+
+            foreach (var info in originalElementInfo)
+            {
+                TypePositionInfo updatedInfo = info with
+                {
+                    MarshallingAttributeInfo = info.MarshallingAttributeInfo is JSMarshallingInfo jsInfo
+                        ? jsInfo.AddElementDependencies([typeInfoBuilder[0], typeInfoBuilder[1]])
+                        : info.MarshallingAttributeInfo,
+                };
+
+                if (info.IsManagedReturnPosition)
+                {
+                    hasReturn = info.ManagedType != SpecialTypeInfo.Void;
+                }
+
+                if (info.IsNativeReturnPosition)
+                {
+                    typeInfoBuilder.Add(updatedInfo);
+                }
+                else
+                {
+                    typeInfoBuilder.Add(updatedInfo with
+                    {
+                        NativeIndex = updatedInfo.NativeIndex + NumImplicitArguments
+                    });
+                }
+            }
+
+            ImmutableArray<TypePositionInfo> finalElementInfo = typeInfoBuilder.ToImmutable();
+
             // Generate stub code
-            var stubGenerator = new JSImportCodeGenerator(
-                incrementalContext.GeneratorFactoryKey.Key.TargetFramework,
-                incrementalContext.GeneratorFactoryKey.Key.TargetFrameworkVersion,
-                incrementalContext.SignatureContext.SignatureContext.ElementTypeInformation,
+            var stubGenerator = new ManagedToNativeStubGenerator(
+                finalElementInfo,
+                setLastError: false,
+                diagnostics,
+                new CompositeMarshallingGeneratorResolver(
+                    new NoSpanAndTaskMixingResolver(),
+                    new JSGeneratorResolver()),
+                new CodeEmitOptions(SkipInit: true));
+
+            const string LocalFunctionName = "__InvokeJSFunction";
+
+            BlockSyntax code = stubGenerator.GenerateStubBody(LocalFunctionName);
+
+            StatementSyntax bindStatement = GenerateBindSyntax(
                 incrementalContext.JSImportData,
                 incrementalContext.SignatureContext,
-                diagnostics,
-                incrementalContext.GeneratorFactoryKey.GeneratorFactory);
+                SignatureBindingHelpers.CreateSignaturesArgument(incrementalContext.SignatureContext.SignatureContext.ElementTypeInformation, StubCodeContext.DefaultManagedToNativeStub));
 
-            BlockSyntax code = stubGenerator.GenerateJSImportBody();
+            LocalFunctionStatementSyntax localFunction = GenerateInvokeFunction(LocalFunctionName, incrementalContext.SignatureContext, stubGenerator, hasReturn);
 
-            return (PrintGeneratedSource(incrementalContext.StubMethodSyntaxTemplate, incrementalContext.SignatureContext, incrementalContext.ContainingSyntaxContext, code), incrementalContext.Diagnostics.Array.AddRange(diagnostics.Diagnostics));
+            return (PrintGeneratedSource(incrementalContext.StubMethodSyntaxTemplate, incrementalContext.SignatureContext, incrementalContext.ContainingSyntaxContext, Block(bindStatement, code, localFunction)), incrementalContext.Diagnostics.Array.AddRange(diagnostics.Diagnostics));
+        }
+
+        private static IfStatementSyntax GenerateBindSyntax(JSImportData jsImportData, JSSignatureContext signatureContext, ArgumentSyntax signaturesArgument)
+        {
+            var bindingParameters =
+                (new ArgumentSyntax[] {
+                        Argument(LiteralExpression(SyntaxKind.StringLiteralExpression, Literal(jsImportData.FunctionName))),
+                        Argument(
+                            jsImportData.ModuleName == null
+                            ? LiteralExpression(SyntaxKind.NullLiteralExpression)
+                            : LiteralExpression(SyntaxKind.StringLiteralExpression, Literal(jsImportData.ModuleName))),
+                        signaturesArgument,
+                });
+
+            return IfStatement(BinaryExpression(SyntaxKind.EqualsExpression, IdentifierName(signatureContext.BindingName), LiteralExpression(SyntaxKind.NullLiteralExpression)),
+                            Block(SingletonList<StatementSyntax>(
+                                    ExpressionStatement(AssignmentExpression(SyntaxKind.SimpleAssignmentExpression,
+                                            IdentifierName(signatureContext.BindingName),
+                                            InvocationExpression(MemberAccessExpression(SyntaxKind.SimpleMemberAccessExpression,
+                                                    IdentifierName(Constants.JSFunctionSignatureGlobal), IdentifierName(Constants.BindJSFunctionMethod)))
+                                            .WithArgumentList(ArgumentList(SeparatedList(bindingParameters))))))));
+        }
+
+        private static LocalFunctionStatementSyntax GenerateInvokeFunction(string functionName, JSSignatureContext signatureContext, ManagedToNativeStubGenerator stubGenerator, bool hasReturn)
+        {
+            var (parameters, returnType, _) = stubGenerator.GenerateTargetMethodSignatureData();
+            TypeSyntax jsMarshalerArgument = ParseTypeName(Constants.JSMarshalerArgumentGlobal);
+
+            CollectionExpressionSyntax argumentsBuffer = CollectionExpression(
+                SeparatedList<CollectionElementSyntax>(
+                    parameters.Parameters
+                        .Select(p => ExpressionElement(IdentifierName(p.Identifier)))));
+
+            List<StatementSyntax> statements = [];
+
+            if (hasReturn)
+            {
+                statements.AddRange([
+                    Declare(
+                        SpanOf(jsMarshalerArgument),
+                        Constants.ArgumentsBuffer,
+                        argumentsBuffer),
+                    MethodInvocationStatement(
+                        IdentifierName(Constants.JSFunctionSignatureGlobal),
+                        IdentifierName("InvokeJS"),
+                        Argument(IdentifierName(signatureContext.BindingName)),
+                        Argument(IdentifierName(Constants.ArgumentsBuffer))),
+                    ReturnStatement(
+                    ElementAccessExpression(
+                    IdentifierName(Constants.ArgumentsBuffer),
+                    BracketedArgumentList(SingletonSeparatedList(Argument(
+                        LiteralExpression(SyntaxKind.NumericLiteralExpression, Literal(1)))))))
+                ]);
+            }
+            else
+            {
+                statements.Add(
+                    MethodInvocationStatement(
+                        IdentifierName(Constants.JSFunctionSignatureGlobal),
+                        IdentifierName("InvokeJS"),
+                        Argument(IdentifierName(signatureContext.BindingName)),
+                        Argument(argumentsBuffer)));
+            }
+
+            return LocalFunctionStatement(
+                hasReturn ? jsMarshalerArgument : PredefinedType(Token(SyntaxKind.VoidKeyword)),
+                functionName)
+                .WithBody(Block(statements))
+                .WithParameterList(parameters)
+                .WithAttributeLists(SingletonList(AttributeList(SingletonSeparatedList(
+                    Attribute(IdentifierName(Constants.DebuggerNonUserCodeAttribute))))));
         }
 
         private static Diagnostic? GetDiagnosticIfInvalidMethodForGeneration(MethodDeclarationSyntax methodSyntax, IMethodSymbol method)

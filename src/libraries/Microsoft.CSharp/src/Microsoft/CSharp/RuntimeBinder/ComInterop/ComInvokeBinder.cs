@@ -8,10 +8,12 @@ using System.Diagnostics.CodeAnalysis;
 using System.Dynamic;
 using System.Linq.Expressions;
 using System.Runtime.InteropServices;
+using System.Runtime.InteropServices.Marshalling;
 using ComTypes = System.Runtime.InteropServices.ComTypes;
 
 namespace Microsoft.CSharp.RuntimeBinder.ComInterop
 {
+    [RequiresDynamicCode(Binder.DynamicCodeWarning)]
     internal sealed class ComInvokeBinder
     {
         private readonly ComMethodDesc _methodDesc;
@@ -92,7 +94,7 @@ namespace Microsoft.CSharp.RuntimeBinder.ComInterop
 
         private ParameterExpression InvokeResultVariable
         {
-            get { return EnsureVariable(ref _invokeResult, typeof(Variant), "invokeResult"); }
+            get { return EnsureVariable(ref _invokeResult, typeof(ComVariant), "invokeResult"); }
         }
 
         private ParameterExpression ReturnValueVariable
@@ -306,8 +308,8 @@ namespace Microsoft.CSharp.RuntimeBinder.ComInterop
             //
             Expression invokeResultObject =
                 Expression.Call(
-                    InvokeResultVariable,
-                    typeof(Variant).GetMethod(nameof(Variant.ToObject)));
+                    typeof(BuiltInInteropVariantExtensions).GetMethod(nameof(BuiltInInteropVariantExtensions.ToObject)),
+                    InvokeResultVariable);
 
             VariantBuilder[] variants = _varEnumSelector.VariantBuilders;
 
@@ -360,7 +362,7 @@ namespace Microsoft.CSharp.RuntimeBinder.ComInterop
             finallyStatements.Add(
                 Expression.Call(
                     InvokeResultVariable,
-                    typeof(Variant).GetMethod(nameof(Variant.Clear))
+                    typeof(ComVariant).GetMethod(nameof(ComVariant.Dispose))
                 )
             );
 

@@ -9,7 +9,6 @@
 #include "rhassert.h"
 #include "slist.h"
 #include "holder.h"
-#include "SpinLock.h"
 #include "rhbinder.h"
 #include "CachedInterfaceDispatch.h"
 
@@ -24,6 +23,6 @@ void SyncClean::CleanUp ()
 {
 #ifdef FEATURE_CACHED_INTERFACE_DISPATCH
     // Update any interface dispatch caches that were unsafe to modify outside of this GC.
-    ReclaimUnusedInterfaceDispatchCaches();
+    InterfaceDispatch_ReclaimUnusedInterfaceDispatchCaches();
 #endif
 }

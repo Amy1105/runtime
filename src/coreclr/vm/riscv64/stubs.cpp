@@ -4,7 +4,7 @@
 // File: stubs.cpp
 //
 // This file contains stub functions for unimplemented features need to
-// run on the ARM64 platform.
+// run on the RISCV64 platform.
 
 #include "common.h"
 #include "dllimportcallback.h"
@@ -14,6 +14,9 @@
 #include "jitinterface.h"
 #include "ecall.h"
 
+#ifdef FEATURE_PERFMAP
+#include "perfmap.h"
+#endif
 
 #ifndef DACCESS_COMPILE
 //-----------------------------------------------------------------------
@@ -88,7 +91,7 @@ class BranchInstructionFormat : public InstructionFormat
             }
         }
 
-        virtual VOID EmitInstruction(UINT refSize, __int64 fixedUpReference, BYTE *pOutBufferRX, BYTE *pOutBufferRW, UINT variationCode, BYTE *pDataBuffer)
+        virtual VOID EmitInstruction(UINT refSize, int64_t fixedUpReference, BYTE *pOutBufferRX, BYTE *pOutBufferRW, UINT variationCode, BYTE *pDataBuffer)
         {
             LIMITED_METHOD_CONTRACT;
 
@@ -96,7 +99,7 @@ class BranchInstructionFormat : public InstructionFormat
             {
                 _ASSERTE(((UINT_PTR)pDataBuffer & 7) == 0);
 
-                __int64 dataOffset = pDataBuffer - pOutBufferRW;
+                int64_t dataOffset = pDataBuffer - pOutBufferRW;
 
                 if ((dataOffset < -(0x80000000L)) || (dataOffset > 0x7fffffff))
                     COMPlusThrow(kNotSupportedException);
@@ -119,13 +122,13 @@ class BranchInstructionFormat : public InstructionFormat
                     *(DWORD*)(pOutBufferRW + 12) = 0x00030067 ;// jalr  x0, t1,0
                 }
 
-                *((__int64*)pDataBuffer) = fixedUpReference + (__int64)pOutBufferRX;
+                *((int64_t*)pDataBuffer) = fixedUpReference + (int64_t)pOutBufferRX;
             }
             else
             {
                 _ASSERTE(((UINT_PTR)pDataBuffer & 7) == 0);
 
-                __int64 dataOffset = pDataBuffer - pOutBufferRW;
+                int64_t dataOffset = pDataBuffer - pOutBufferRW;
 
                 if ((dataOffset < -(0x80000000L)) || (dataOffset > 0x7fffffff))
                     COMPlusThrow(kNotSupportedException);
@@ -146,9 +149,9 @@ class BranchInstructionFormat : public InstructionFormat
                     *(DWORD*)(pOutBufferRW + 8) = 0x00030067 ;// jalr  x0, t1,0
                 }
 
-                if (!ClrSafeInt<__int64>::addition(fixedUpReference, (__int64)pOutBufferRX, fixedUpReference))
+                if (!ClrSafeInt<int64_t>::addition(fixedUpReference, (int64_t)pOutBufferRX, fixedUpReference))
                     COMPlusThrowArithmetic();
-                *((__int64*)pDataBuffer) = fixedUpReference;
+                *((int64_t*)pDataBuffer) = fixedUpReference;
             }
         }
 };
@@ -180,8 +183,7 @@ void ClearRegDisplayArgumentAndScratchRegisters(REGDISPLAY * pRD)
 void LazyMachState::unwindLazyState(LazyMachState* baseState,
                                     MachState* unwoundstate,
                                     DWORD threadId,
-                                    int funCallDepth,
-                                    HostCallPreference hostCallPreference)
+                                    int funCallDepth)
 {
     T_CONTEXT context;
     T_KNONVOLATILE_CONTEXT_POINTERS nonVolContextPtrs;
@@ -202,7 +204,7 @@ void LazyMachState::unwindLazyState(LazyMachState* baseState,
     context.S11 = unwoundstate->captureCalleeSavedRegisters[11] = baseState->captureCalleeSavedRegisters[11];
     context.Gp = unwoundstate->captureCalleeSavedRegisters[12] = baseState->captureCalleeSavedRegisters[12];
     context.Tp = unwoundstate->captureCalleeSavedRegisters[13] = baseState->captureCalleeSavedRegisters[13];
-    context.Ra = NULL; // Filled by the unwinder
+    context.Ra = 0; // Filled by the unwinder
 
     context.Sp = baseState->captureSp;
     context.Pc = baseState->captureIp;
@@ -226,7 +228,7 @@ void LazyMachState::unwindLazyState(LazyMachState* baseState,
     nonVolContextPtrs.S11 = &unwoundstate->captureCalleeSavedRegisters[11];
     nonVolContextPtrs.Gp = &unwoundstate->captureCalleeSavedRegisters[12];
     nonVolContextPtrs.Tp = &unwoundstate->captureCalleeSavedRegisters[13];
-    nonVolContextPtrs.Ra = NULL; // Filled by the unwinder
+    nonVolContextPtrs.Ra = 0; // Filled by the unwinder
 
 #endif // DACCESS_COMPILE
 
@@ -266,20 +268,7 @@ void LazyMachState::unwindLazyState(LazyMachState* baseState,
         {
             // Determine  whether given IP resides in JITted code. (It returns nonzero in that case.)
             // Use it now to see if we've unwound to managed code yet.
-            BOOL fFailedReaderLock = FALSE;
-            BOOL fIsManagedCode = ExecutionManager::IsManagedCode(pvControlPc, hostCallPreference, &fFailedReaderLock);
-            if (fFailedReaderLock)
-            {
-                // We don't know if we would have been able to find a JIT
-                // manager, because we couldn't enter the reader lock without
-                // yielding (and our caller doesn't want us to yield).  So abort
-                // now.
-
-                // Invalidate the lazyState we're returning, so the caller knows
-                // we aborted before we could fully unwind
-                unwoundstate->_isValid = false;
-                return;
-            }
+            BOOL fIsManagedCode = ExecutionManager::IsManagedCode(pvControlPc);
 
             if (fIsManagedCode)
                 break;
@@ -344,7 +333,7 @@ void LazyMachState::unwindLazyState(LazyMachState* baseState,
     unwoundstate->_isValid = TRUE;
 }
 
-void HelperMethodFrame::UpdateRegDisplay(const PREGDISPLAY pRD)
+void HelperMethodFrame::UpdateRegDisplay_Impl(const PREGDISPLAY pRD, bool updateFloats)
 {
     CONTRACTL
     {
@@ -354,6 +343,14 @@ void HelperMethodFrame::UpdateRegDisplay(const PREGDISPLAY pRD)
         SUPPORTS_DAC;
     }
     CONTRACTL_END;
+
+#ifndef DACCESS_COMPILE
+    if (updateFloats)
+    {
+        UpdateFloatingPointRegisters(pRD);
+        _ASSERTE(pRD->pCurrentContext->Pc == GetReturnAddress());
+    }
+#endif // DACCESS_COMPILE
 
     pRD->IsCallerContextValid = FALSE;
     pRD->IsCallerSPValid      = FALSE;        // Don't add usage of this field.  This is only temporary.
@@ -372,7 +369,7 @@ void HelperMethodFrame::UpdateRegDisplay(const PREGDISPLAY pRD)
         // This allocation throws on OOM.
         MachState* pUnwoundState = (MachState*)DacAllocHostOnlyInstance(sizeof(*pUnwoundState), true);
 
-        InsureInit(false, pUnwoundState);
+        EnsureInit(pUnwoundState);
 
         pRD->pCurrentContext->Pc = pRD->ControlPC = pUnwoundState->_pc;
         pRD->pCurrentContext->Sp = pRD->SP        = pUnwoundState->_sp;
@@ -390,7 +387,7 @@ void HelperMethodFrame::UpdateRegDisplay(const PREGDISPLAY pRD)
         pRD->pCurrentContext->S11 = (DWORD64)(pUnwoundState->captureCalleeSavedRegisters[11]);
         pRD->pCurrentContext->Gp = (DWORD64)(pUnwoundState->captureCalleeSavedRegisters[12]);
         pRD->pCurrentContext->Tp = (DWORD64)(pUnwoundState->captureCalleeSavedRegisters[13]);
-        pRD->pCurrentContext->Ra = NULL; // Unwind again to get Caller's PC
+        pRD->pCurrentContext->Ra = 0; // Unwind again to get Caller's PC
 
         pRD->pCurrentContextPointers->Fp = pUnwoundState->ptrCalleeSavedRegisters[0];
         pRD->pCurrentContextPointers->S1 = pUnwoundState->ptrCalleeSavedRegisters[1];
@@ -434,7 +431,7 @@ void HelperMethodFrame::UpdateRegDisplay(const PREGDISPLAY pRD)
     pRD->pCurrentContext->S11 = m_MachState.ptrCalleeSavedRegisters[11] ? *m_MachState.ptrCalleeSavedRegisters[11] : m_MachState.captureCalleeSavedRegisters[11];
     pRD->pCurrentContext->Gp = m_MachState.ptrCalleeSavedRegisters[12] ? *m_MachState.ptrCalleeSavedRegisters[12] : m_MachState.captureCalleeSavedRegisters[12];
     pRD->pCurrentContext->Tp = m_MachState.ptrCalleeSavedRegisters[13] ? *m_MachState.ptrCalleeSavedRegisters[13] : m_MachState.captureCalleeSavedRegisters[13];
-    pRD->pCurrentContext->Ra = NULL; // Unwind again to get Caller's PC
+    pRD->pCurrentContext->Ra = 0; // Unwind again to get Caller's PC
 #else // TARGET_UNIX
     pRD->pCurrentContext->Fp = *m_MachState.ptrCalleeSavedRegisters[0];
     pRD->pCurrentContext->S1 = *m_MachState.ptrCalleeSavedRegisters[1];
@@ -450,7 +447,7 @@ void HelperMethodFrame::UpdateRegDisplay(const PREGDISPLAY pRD)
     pRD->pCurrentContext->S11 = *m_MachState.ptrCalleeSavedRegisters[11];
     pRD->pCurrentContext->Gp = *m_MachState.ptrCalleeSavedRegisters[12];
     pRD->pCurrentContext->Tp = *m_MachState.ptrCalleeSavedRegisters[13];
-    pRD->pCurrentContext->Ra = NULL; // Unwind again to get Caller's PC
+    pRD->pCurrentContext->Ra = 0; // Unwind again to get Caller's PC
 #endif
 
 #if !defined(DACCESS_COMPILE)
@@ -472,30 +469,6 @@ void HelperMethodFrame::UpdateRegDisplay(const PREGDISPLAY pRD)
 #endif
     ClearRegDisplayArgumentAndScratchRegisters(pRD);
 }
-
-#ifndef DACCESS_COMPILE
-void ThisPtrRetBufPrecode::Init(MethodDesc* pMD, LoaderAllocator *pLoaderAllocator)
-{
-    WRAPPER_NO_CONTRACT;
-
-    //Initially
-    //a0 -This ptr
-    //a1 -ReturnBuffer
-    m_rgCode[0] = 0x00050f93; // addi  t6, a0, 0x0
-    m_rgCode[1] = 0x00058513; // addi  a0, a1, 0x0
-    m_rgCode[2] = 0x000f8593; // addi  a1, t6, 0x0
-    m_rgCode[3] = 0x00000f97; // auipc t6, 0
-    m_rgCode[4] = 0x00cfbf83; // ld    t6, 12(t6)
-    m_rgCode[5] = 0x000f8067; // jalr  x0, 0(t6)
-
-    _ASSERTE((UINT32*)&m_pTarget == &m_rgCode[6]);
-    _ASSERTE(6 == ARRAY_SIZE(m_rgCode));
-
-    m_pTarget = GetPreStubEntryPoint();
-    m_pMethodDesc = (TADDR)pMD;
-}
-
-#endif // !DACCESS_COMPILE
 
 void UpdateRegDisplayFromCalleeSavedRegisters(REGDISPLAY * pRD, CalleeSavedRegisters * pCalleeSaved)
 {
@@ -534,8 +507,16 @@ void UpdateRegDisplayFromCalleeSavedRegisters(REGDISPLAY * pRD, CalleeSavedRegis
     pContextPointers->Ra  = (PDWORD64)&pCalleeSaved->ra;
 }
 
-void TransitionFrame::UpdateRegDisplay(const PREGDISPLAY pRD)
+void TransitionFrame::UpdateRegDisplay_Impl(const PREGDISPLAY pRD, bool updateFloats)
 {
+#ifndef DACCESS_COMPILE
+    if (updateFloats)
+    {
+        UpdateFloatingPointRegisters(pRD);
+        _ASSERTE(pRD->pCurrentContext->Pc == GetReturnAddress());
+    }
+#endif // DACCESS_COMPILE
+
     pRD->IsCallerContextValid = FALSE;
     pRD->IsCallerSPValid      = FALSE;        // Don't add usage of this field.  This is only temporary.
 
@@ -554,10 +535,10 @@ void TransitionFrame::UpdateRegDisplay(const PREGDISPLAY pRD)
     // Finally, syncup the regdisplay with the context
     SyncRegDisplayToCurrentContext(pRD);
 
-    LOG((LF_GCROOTS, LL_INFO100000, "STACKWALK    TransitionFrame::UpdateRegDisplay(pc:%p, sp:%p)\n", pRD->ControlPC, pRD->SP));
+    LOG((LF_GCROOTS, LL_INFO100000, "STACKWALK    TransitionFrame::UpdateRegDisplay_Impl(pc:%p, sp:%p)\n", pRD->ControlPC, pRD->SP));
 }
 
-void FaultingExceptionFrame::UpdateRegDisplay(const PREGDISPLAY pRD)
+void FaultingExceptionFrame::UpdateRegDisplay_Impl(const PREGDISPLAY pRD, bool updateFloats)
 {
     LIMITED_METHOD_DAC_CONTRACT;
 
@@ -590,10 +571,10 @@ void FaultingExceptionFrame::UpdateRegDisplay(const PREGDISPLAY pRD)
     pRD->IsCallerContextValid = FALSE;
     pRD->IsCallerSPValid      = FALSE;        // Don't add usage of this field.  This is only temporary.
 
-    LOG((LF_GCROOTS, LL_INFO100000, "STACKWALK    FaultingExceptionFrame::UpdateRegDisplay(pc:%p, sp:%p)\n", pRD->ControlPC, pRD->SP));
+    LOG((LF_GCROOTS, LL_INFO100000, "STACKWALK    FaultingExceptionFrame::UpdateRegDisplay_Impl(pc:%p, sp:%p)\n", pRD->ControlPC, pRD->SP));
 }
 
-void InlinedCallFrame::UpdateRegDisplay(const PREGDISPLAY pRD)
+void InlinedCallFrame::UpdateRegDisplay_Impl(const PREGDISPLAY pRD, bool updateFloats)
 {
     CONTRACT_VOID
     {
@@ -602,7 +583,6 @@ void InlinedCallFrame::UpdateRegDisplay(const PREGDISPLAY pRD)
 #ifdef PROFILING_SUPPORTED
         PRECONDITION(CORProfilerStackSnapshotEnabled() || InlinedCallFrame::FrameHasActiveCall(this));
 #endif
-        HOST_NOCALLS;
         MODE_ANY;
         SUPPORTS_DAC;
     }
@@ -613,6 +593,13 @@ void InlinedCallFrame::UpdateRegDisplay(const PREGDISPLAY pRD)
         LOG((LF_CORDB, LL_ERROR, "WARNING: InlinedCallFrame::UpdateRegDisplay called on inactive frame %p\n", this));
         return;
     }
+
+#ifndef DACCESS_COMPILE
+    if (updateFloats)
+    {
+        UpdateFloatingPointRegisters(pRD);
+    }
+#endif // DACCESS_COMPILE
 
     pRD->IsCallerContextValid = FALSE;
     pRD->IsCallerSPValid      = FALSE;
@@ -647,19 +634,19 @@ void InlinedCallFrame::UpdateRegDisplay(const PREGDISPLAY pRD)
     // Update the frame pointer in the current context.
     pRD->pCurrentContextPointers->Fp = &m_pCalleeSavedFP;
 
-    LOG((LF_GCROOTS, LL_INFO100000, "STACKWALK    InlinedCallFrame::UpdateRegDisplay(pc:%p, sp:%p)\n", pRD->ControlPC, pRD->SP));
+    LOG((LF_GCROOTS, LL_INFO100000, "STACKWALK    InlinedCallFrame::UpdateRegDisplay_Impl(pc:%p, sp:%p)\n", pRD->ControlPC, pRD->SP));
 
     RETURN;
 }
 
 #ifdef FEATURE_HIJACK
-TADDR ResumableFrame::GetReturnAddressPtr(void)
+TADDR ResumableFrame::GetReturnAddressPtr_Impl(void)
 {
     LIMITED_METHOD_DAC_CONTRACT;
     return dac_cast<TADDR>(m_Regs) + offsetof(T_CONTEXT, Pc);
 }
 
-void ResumableFrame::UpdateRegDisplay(const PREGDISPLAY pRD)
+void ResumableFrame::UpdateRegDisplay_Impl(const PREGDISPLAY pRD, bool updateFloats)
 {
     CONTRACT_VOID
     {
@@ -711,12 +698,12 @@ void ResumableFrame::UpdateRegDisplay(const PREGDISPLAY pRD)
     pRD->IsCallerContextValid = FALSE;
     pRD->IsCallerSPValid      = FALSE;        // Don't add usage of this field.  This is only temporary.
 
-    LOG((LF_GCROOTS, LL_INFO100000, "STACKWALK    ResumableFrame::UpdateRegDisplay(pc:%p, sp:%p)\n", pRD->ControlPC, pRD->SP));
+    LOG((LF_GCROOTS, LL_INFO100000, "STACKWALK    ResumableFrame::UpdateRegDisplay_Impl(pc:%p, sp:%p)\n", pRD->ControlPC, pRD->SP));
 
     RETURN;
 }
 
-void HijackFrame::UpdateRegDisplay(const PREGDISPLAY pRD)
+void HijackFrame::UpdateRegDisplay_Impl(const PREGDISPLAY pRD, bool updateFloats)
 {
     LIMITED_METHOD_CONTRACT;
 
@@ -729,6 +716,13 @@ void HijackFrame::UpdateRegDisplay(const PREGDISPLAY pRD)
     // stack must be multiple of 16. So if s is not multiple of 16 then there must be padding of 8 bytes
     s = s + s%16;
     pRD->pCurrentContext->Sp = PTR_TO_TADDR(m_Args) + s ;
+
+    pRD->pCurrentContext->A0 = m_Args->A0;
+    pRD->pCurrentContext->A1 = m_Args->A1;
+
+    pRD->volatileCurrContextPointers.A0 = &m_Args->A0;
+    pRD->volatileCurrContextPointers.A1 = &m_Args->A1;
+
 
     pRD->pCurrentContext->S1 = m_Args->S1;
     pRD->pCurrentContext->S2 = m_Args->S2;
@@ -763,7 +757,7 @@ void HijackFrame::UpdateRegDisplay(const PREGDISPLAY pRD)
     pRD->pCurrentContextPointers->Ra = NULL;
     SyncRegDisplayToCurrentContext(pRD);
 
-    LOG((LF_GCROOTS, LL_INFO100000, "STACKWALK    HijackFrame::UpdateRegDisplay(pc:%p, sp:%p)\n", pRD->ControlPC, pRD->SP));
+    LOG((LF_GCROOTS, LL_INFO100000, "STACKWALK    HijackFrame::UpdateRegDisplay_Impl(pc:%p, sp:%p)\n", pRD->ControlPC, pRD->SP));
 }
 #endif // FEATURE_HIJACK
 
@@ -775,11 +769,6 @@ void emitCOMStubCall (ComCallMethodDesc *pCOMMethodRX, ComCallMethodDesc *pCOMMe
 }
 #endif // FEATURE_COMINTEROP
 
-void JIT_TailCall()
-{
-    _ASSERTE(!"RISCV64:NYI");
-}
-
 #if !defined(DACCESS_COMPILE)
 EXTERN_C void JIT_UpdateWriteBarrierState(bool skipEphemeralCheck, size_t writeableOffset);
 
@@ -788,15 +777,18 @@ extern "C" void STDCALL JIT_PatchedCodeLast();
 
 static void UpdateWriteBarrierState(bool skipEphemeralCheck)
 {
-    BYTE *writeBarrierCodeStart = GetWriteBarrierCodeLocation((void*)JIT_PatchedCodeStart);
-    BYTE *writeBarrierCodeStartRW = writeBarrierCodeStart;
-    ExecutableWriterHolderNoLog<BYTE> writeBarrierWriterHolder;
     if (IsWriteBarrierCopyEnabled())
     {
-        writeBarrierWriterHolder.AssignExecutableWriterHolder(writeBarrierCodeStart, (BYTE*)JIT_PatchedCodeLast - (BYTE*)JIT_PatchedCodeStart);
-        writeBarrierCodeStartRW = writeBarrierWriterHolder.GetRW();
+        BYTE *writeBarrierCodeStart = GetWriteBarrierCodeLocation((void*)JIT_PatchedCodeStart);
+        BYTE *writeBarrierCodeStartRW = writeBarrierCodeStart;
+        ExecutableWriterHolderNoLog<BYTE> writeBarrierWriterHolder;
+        if (IsWriteBarrierCopyEnabled())
+        {
+            writeBarrierWriterHolder.AssignExecutableWriterHolder(writeBarrierCodeStart, (BYTE*)JIT_PatchedCodeLast - (BYTE*)JIT_PatchedCodeStart);
+            writeBarrierCodeStartRW = writeBarrierWriterHolder.GetRW();
+        }
+        JIT_UpdateWriteBarrierState(GCHeapUtilities::IsServerHeap(), writeBarrierCodeStartRW - writeBarrierCodeStart);
     }
-    JIT_UpdateWriteBarrierState(GCHeapUtilities::IsServerHeap(), writeBarrierCodeStartRW - writeBarrierCodeStart);
 }
 
 void InitJITHelpers1()
@@ -831,15 +823,6 @@ void InitJITHelpers1()
 void UpdateWriteBarrierState(bool) {}
 #endif // !defined(DACCESS_COMPILE)
 
-PTR_CONTEXT GetCONTEXTFromRedirectedStubStackFrame(T_DISPATCHER_CONTEXT * pDispatcherContext)
-{
-    LIMITED_METHOD_DAC_CONTRACT;
-
-    DWORD64 stackSlot = pDispatcherContext->EstablisherFrame + REDIRECTSTUB_SP_OFFSET_CONTEXT;
-    PTR_PTR_CONTEXT ppContext = dac_cast<PTR_PTR_CONTEXT>((TADDR)stackSlot);
-    return *ppContext;
-}
-
 PTR_CONTEXT GetCONTEXTFromRedirectedStubStackFrame(T_CONTEXT * pContext)
 {
     LIMITED_METHOD_DAC_CONTRACT;
@@ -849,21 +832,7 @@ PTR_CONTEXT GetCONTEXTFromRedirectedStubStackFrame(T_CONTEXT * pContext)
     return *ppContext;
 }
 
-void RedirectForThreadAbort()
-{
-    // ThreadAbort is not supported in .net core
-    throw "NYI";
-}
-
 #if !defined(DACCESS_COMPILE)
-FaultingExceptionFrame *GetFrameFromRedirectedStubStackFrame (DISPATCHER_CONTEXT *pDispatcherContext)
-{
-    _ASSERTE(!"RISCV64: not implementation on riscv64!!!");
-    LIMITED_METHOD_CONTRACT;
-
-    return (FaultingExceptionFrame*)NULL;
-}
-
 
 BOOL
 AdjustContextForVirtualStub(
@@ -921,62 +890,6 @@ AdjustContextForVirtualStub(
 }
 #endif // !DACCESS_COMPILE
 
-UMEntryThunk * UMEntryThunk::Decode(void *pCallback)
-{
-    _ASSERTE(offsetof(UMEntryThunkCode, m_code) == 0);
-    UMEntryThunkCode * pCode = (UMEntryThunkCode*)pCallback;
-
-    // We may be called with an unmanaged external code pointer instead. So if it doesn't look like one of our
-    // stubs (see UMEntryThunkCode::Encode below) then we'll return NULL. Luckily in these scenarios our
-    // caller will perform a hash lookup on successful return to verify our result in case random unmanaged
-    // code happens to look like ours.
-    if ((pCode->m_code[0] == 0x00000f97) && // auipc t6, 0
-        (pCode->m_code[1] == 0x018fb383) && // ld    t2, 24(t6)
-        (pCode->m_code[2] == 0x010fbf83) && // ld    t6, 16(t6)
-        (pCode->m_code[3] == 0x000f8067))   // jalr  x0, 0(t6)
-    {
-        return (UMEntryThunk*)pCode->m_pvSecretParam;
-    }
-
-    return NULL;
-}
-
-void UMEntryThunkCode::Encode(UMEntryThunkCode *pEntryThunkCodeRX, BYTE* pTargetCode, void* pvSecretParam)
-{
-    // auipc t6, 0
-    // ld    t2, 24(t6)
-    // ld    t6, 16(t6)
-    // jalr  x0, 0(t6)
-    // m_pTargetCode data
-    // m_pvSecretParam data
-
-    m_code[0] = 0x00000f97; // auipc t6, 0
-    m_code[1] = 0x018fb383; // ld    t2, 24(t6)
-    m_code[2] = 0x010fbf83; // ld    t6, 16(t6)
-    m_code[3] = 0x000f8067; // jalr  x0, 0(t6)
-
-    m_pTargetCode = (TADDR)pTargetCode;
-    m_pvSecretParam = (TADDR)pvSecretParam;
-    FlushInstructionCache(GetCurrentProcess(),&pEntryThunkCodeRX->m_code,sizeof(m_code));
-}
-
-#ifndef DACCESS_COMPILE
-
-void UMEntryThunkCode::Poison()
-{
-    ExecutableWriterHolder<UMEntryThunkCode> thunkWriterHolder(this, sizeof(UMEntryThunkCode));
-    UMEntryThunkCode *pThisRW = thunkWriterHolder.GetRW();
-
-    pThisRW->m_pTargetCode = (TADDR)UMEntryThunk::ReportViolation;
-
-    // ld   a0, 24(t6)
-    pThisRW->m_code[1] = 0x018fb503;
-
-    ClrFlushInstructionCache(&m_code,sizeof(m_code));
-}
-
-#endif // DACCESS_COMPILE
-
 #if !defined(DACCESS_COMPILE)
 VOID ResetCurrentContext()
 {
@@ -991,7 +904,7 @@ LONG CLRNoCatchHandler(EXCEPTION_POINTERS* pExceptionInfo, PVOID pv)
 
 void FlushWriteBarrierInstructionCache()
 {
-    // this wouldn't be called in arm64, just to comply with gchelpers.h
+    // this wouldn't be called in riscv64, just to comply with gchelpers.h
 }
 
 int StompWriteBarrierEphemeral(bool isRuntimeSuspended)
@@ -1061,18 +974,14 @@ void StubLinkerCPU::EmitMovConstant(IntReg reg, UINT64 imm)
 
     // Since ADDIW use sign extension for immediate
     // we have to adjust higher 19 bit loaded by LUI
-    // for case when low part is bigger than 0x800.
+    // for case when the low 12-bit part is negative.
     UINT32 high19 = (high31 + 0x800) >> 12;
 
     EmitLuImm(reg, high19);
-    if (high31 & 0x800)
+    int low12 = int(high31) << (32-12) >> (32-12);
+    if (low12)
     {
-        // EmitAddImm does not allow negative immediate values, so use EmitSubImm.
-        EmitSubImm(reg, reg, ~high31 + 1 & 0xFFF);
-    }
-    else
-    {
-        EmitAddImm(reg, reg, high31 & 0x7FF);
+        EmitAddImm(reg, reg, low12);
     }
 
     // And load remaining part by batches of 11 bits size.
@@ -1105,12 +1014,8 @@ void StubLinkerCPU::EmitMovConstant(IntReg reg, UINT64 imm)
     }
 }
 
-void StubLinkerCPU::EmitJumpRegister(IntReg regTarget)
-{
-    Emit32(0x00000067 | (regTarget << 15));
-}
 
-// Instruction types as per RISC-V Spec, Chapter 24 RV32/64G Instruction Set Listings
+// Instruction types as per RISC-V Spec, Chapter "RV32/64G Instruction Set Listings"
 static unsigned ITypeInstr(unsigned opcode, unsigned funct3, unsigned rd, unsigned rs1, int imm12)
 {
     _ASSERTE(!(opcode >> 7));
@@ -1144,51 +1049,79 @@ static unsigned RTypeInstr(unsigned opcode, unsigned funct3, unsigned funct7, un
     return opcode | (rd << 7) | (funct3 << 12) | (rs1 << 15) | (rs2 << 20) | (funct7 << 25);
 }
 
+static unsigned UTypeInstr(unsigned opcode, unsigned rd, int imm20)
+{
+    _ASSERTE(!(opcode >> 7));
+    _ASSERTE(!(rd >> 5));
+    _ASSERTE(StubLinkerCPU::isValidUimm20(imm20));
+    return opcode | (rd << 7) | (imm20 << 12);
+}
+
+static unsigned BTypeInstr(unsigned opcode, unsigned funct3, unsigned rs1, unsigned rs2, int imm13)
+{
+    _ASSERTE(!(opcode >> 7));
+    _ASSERTE(!(funct3 >> 3));
+    _ASSERTE(!(rs1 >> 5));
+    _ASSERTE(!(rs2 >> 5));
+    _ASSERTE(StubLinkerCPU::isValidSimm13(imm13));
+    _ASSERTE(IS_ALIGNED(imm13, 2));
+    int immLo1 = (imm13 >> 11) & 0x1;
+    int immLo4 = (imm13 >> 1) & 0xf;
+    int immHi6 = (imm13 >> 5) & 0x3f;
+    int immHi1 = (imm13 >> 12) & 0x1;
+    return opcode | (immLo4 << 8) | (funct3 << 12) | (rs1 << 15) | (rs2 << 20) | (immHi6 << 25) | (immLo1 << 7) | (immHi1 << 31);
+}
+
+static const char* intRegAbiNames[] = {
+    "zero", "ra", "sp", "gp", "tp",
+    "t0", "t1", "t2",
+    "fp", "s1",
+    "a0", "a1", "a2", "a3", "a4", "a5", "a6", "a7",
+    "s2", "s3", "s4", "s5", "s6", "s7", "s8", "s9", "s10", "s11",
+    "t3", "t4", "t5", "t6"
+};
+
+void StubLinkerCPU::EmitJumpRegister(IntReg regTarget)
+{
+    Emit32(0x00000067 | (regTarget << 15));
+    LOG((LF_STUBS, LL_EVERYTHING, "jalr zero, 0(%s)\n", intRegAbiNames[regTarget]));
+}
+
 void StubLinkerCPU::EmitLoad(IntReg dest, IntReg srcAddr, int offset)
 {
     Emit32(ITypeInstr(0x3, 0x3, dest, srcAddr, offset));  // ld
-}
-void StubLinkerCPU::EmitLoad(FloatReg dest, IntReg srcAddr, int offset)
-{
-    Emit32(ITypeInstr(0x7, 0x3, dest, srcAddr, offset));  // fld
+    LOG((LF_STUBS, LL_EVERYTHING, "ld %s, %i(%s)\n", intRegAbiNames[dest], offset, intRegAbiNames[srcAddr]));
 }
 
 void StubLinkerCPU:: EmitStore(IntReg src, IntReg destAddr, int offset)
 {
     Emit32(STypeInstr(0x23, 0x3, destAddr, src, offset));  // sd
-}
-void StubLinkerCPU::EmitStore(FloatReg src, IntReg destAddr, int offset)
-{
-    Emit32(STypeInstr(0x27, 0x3, destAddr, src, offset));  // fsd
+    LOG((LF_STUBS, LL_EVERYTHING, "sd %s, %i(%s)\n", intRegAbiNames[src], offset, intRegAbiNames[destAddr]));
 }
 
 void StubLinkerCPU::EmitMovReg(IntReg Xd, IntReg Xm)
 {
     EmitAddImm(Xd, Xm, 0);
 }
-void StubLinkerCPU::EmitMovReg(FloatReg dest, FloatReg source)
-{
-    Emit32(RTypeInstr(0x53, 0, 0x11, dest, source, source));  // fsgnj.d
-}
-
-void StubLinkerCPU::EmitSubImm(IntReg Xd, IntReg Xn, unsigned int value)
-{
-    _ASSERTE(value <= 0x800);
-    EmitAddImm(Xd, Xn, ~value + 0x1);
-}
-void StubLinkerCPU::EmitAddImm(IntReg Xd, IntReg Xn, unsigned int value)
+void StubLinkerCPU::EmitAddImm(IntReg Xd, IntReg Xn, int value)
 {
     Emit32(ITypeInstr(0x13, 0, Xd, Xn, value));  // addi
+    if (value)
+        LOG((LF_STUBS, LL_EVERYTHING, "addi %s, %s, %i\n", intRegAbiNames[Xd], intRegAbiNames[Xn], value));
+    else
+        LOG((LF_STUBS, LL_EVERYTHING, "mv %s, %s\n", intRegAbiNames[Xd], intRegAbiNames[Xn]));
 }
 void StubLinkerCPU::EmitSllImm(IntReg Xd, IntReg Xn, unsigned int value)
 {
     _ASSERTE(!(value >> 6));
     Emit32(ITypeInstr(0x13, 0x1, Xd, Xn, value));  // slli
+    LOG((LF_STUBS, LL_EVERYTHING, "slli %s, %s, %u\n", intRegAbiNames[Xd], intRegAbiNames[Xn], value));
 }
 void StubLinkerCPU::EmitLuImm(IntReg Xd, unsigned int value)
 {
     _ASSERTE(value <= 0xFFFFF);
     Emit32((DWORD)(0x00000037 | (value << 12) | (Xd << 7))); // lui Xd, value
+    LOG((LF_STUBS, LL_EVERYTHING, "lui %s, %u\n", intRegAbiNames[Xd], value));
 }
 
 void StubLinkerCPU::Init()
@@ -1196,10 +1129,35 @@ void StubLinkerCPU::Init()
     new (gBranchIF) BranchInstructionFormat();
 }
 
+static bool InRegister(UINT16 ofs)
+{
+    _ASSERTE(ofs != ShuffleEntry::SENTINEL);
+    return (ofs & ShuffleEntry::REGMASK);
+}
+static bool IsRegisterFloating(UINT16 ofs)
+{
+    _ASSERTE(InRegister(ofs));
+    return (ofs & ShuffleEntry::FPREGMASK);
+}
+
+static const int argRegBase = 10;  // first argument register: a0, fa0
+static const IntReg lastIntArgReg = argRegBase + NUM_ARGUMENT_REGISTERS - 1; // a7
+static const IntReg intTempReg = 29; // t4
+
+static int GetRegister(UINT16 ofs)
+{
+    _ASSERTE(InRegister(ofs));
+    return (ofs & ShuffleEntry::OFSREGMASK) + argRegBase;
+}
+static unsigned GetStackSlot(UINT16 ofs)
+{
+    _ASSERTE(!InRegister(ofs));
+    return ofs;
+}
+
 // Emits code to adjust arguments for static delegate target.
 VOID StubLinkerCPU::EmitShuffleThunk(ShuffleEntry *pShuffleEntryArray)
 {
-    static const int argRegBase = 10;  // first argument register: a0, fa0
     static const IntReg t6 = 31, t5 = 30, a0 = argRegBase + 0;
     // On entry a0 holds the delegate instance. Look up the real target address stored in the MethodPtrAux
     // field and saved in t6. Tailcall to the target method after re-arranging the arguments
@@ -1207,113 +1165,38 @@ VOID StubLinkerCPU::EmitShuffleThunk(ShuffleEntry *pShuffleEntryArray)
     // load the indirection cell into t5 used by ResolveWorkerAsmStub
     EmitAddImm(t5, a0, DelegateObject::GetOffsetOfMethodPtrAux());
 
-    int delay_index[8] = {-1};
-    bool is_store = false;
-    UINT16 index = 0;
-    int i = 0;
-    for (ShuffleEntry* pEntry = pShuffleEntryArray; pEntry->srcofs != ShuffleEntry::SENTINEL; pEntry++, i++)
+    const ShuffleEntry* entry = pShuffleEntryArray;
+    // Shuffle integer argument registers
+    for (; entry->srcofs != ShuffleEntry::SENTINEL && InRegister(entry->dstofs) && InRegister(entry->srcofs); ++entry)
     {
-        if (pEntry->srcofs & ShuffleEntry::REGMASK)
+        _ASSERTE(!IsRegisterFloating(entry->srcofs));
+        _ASSERTE(!IsRegisterFloating(entry->dstofs));
+        IntReg src = GetRegister(entry->srcofs);
+        IntReg dst = GetRegister(entry->dstofs);
+        _ASSERTE((src - dst) == 1 || (src - dst) == 2);
+        EmitMovReg(dst, src);
+    }
+
+    if (entry->srcofs != ShuffleEntry::SENTINEL)
+    {
+        _ASSERTE(!IsRegisterFloating(entry->dstofs));
+        _ASSERTE(GetStackSlot(entry->srcofs) == 0);
+        _ASSERTE(lastIntArgReg == GetRegister(entry->dstofs));
+        EmitLoad(lastIntArgReg, RegSp, 0);
+        ++entry;
+
+        // All further shuffling is (stack) <- (stack+1)
+        for (unsigned dst = 0; entry->srcofs != ShuffleEntry::SENTINEL; ++entry, ++dst)
         {
-            // Source in register, destination in register
-
-            // Both the srcofs and dstofs must be of the same kind of registers - float or general purpose.
-            // If source is present in register then destination may be a stack-slot.
-            _ASSERTE(((pEntry->dstofs & ShuffleEntry::FPREGMASK) == (pEntry->srcofs & ShuffleEntry::FPREGMASK)) || !(pEntry->dstofs & (ShuffleEntry::FPREGMASK | ShuffleEntry::REGMASK)));
-            _ASSERTE((pEntry->dstofs & ShuffleEntry::OFSREGMASK) <= 8);//should amend for offset!
-            _ASSERTE((pEntry->srcofs & ShuffleEntry::OFSREGMASK) <= 8);
-
-            if (pEntry->srcofs & ShuffleEntry::FPREGMASK)
-            {
-                int j = 1;
-                while (pEntry[j].srcofs & ShuffleEntry::FPREGMASK)
-                {
-                    j++;
-                }
-                assert((pEntry->dstofs - pEntry->srcofs) == index);
-                assert(8 > index);
-
-                int tmp_reg = 0; // ft0.
-                ShuffleEntry* tmp_entry = pShuffleEntryArray + delay_index[0];
-                while (index)
-                {
-                    EmitLoad(FloatReg(tmp_reg), RegSp, tmp_entry->srcofs * sizeof(void*));
-                    tmp_reg++;
-                    index--;
-                    tmp_entry++;
-                }
-
-                j -= 1;
-                tmp_entry = pEntry + j;
-                i += j;
-                while (pEntry[j].srcofs & ShuffleEntry::FPREGMASK)
-                {
-                    FloatReg src = (pEntry[j].srcofs & ShuffleEntry::OFSREGMASK) + argRegBase;
-                    if (pEntry[j].dstofs & ShuffleEntry::FPREGMASK) {
-                        FloatReg dst = (pEntry[j].dstofs & ShuffleEntry::OFSREGMASK) + argRegBase;
-                        EmitMovReg(dst, src);
-                    }
-                    else
-                    {
-                        EmitStore(src, RegSp, pEntry[j].dstofs * sizeof(void*));
-                    }
-                    j--;
-                }
-
-                assert(tmp_reg <= 7);
-                while (tmp_reg > 0)
-                {
-                    tmp_reg--;
-                    EmitMovReg(FloatReg(index + argRegBase), FloatReg(tmp_reg));
-                    index++;
-                }
-                index = 0;
-                pEntry = tmp_entry;
-            }
-            else
-            {
-                assert(pEntry->dstofs & ShuffleEntry::REGMASK);
-                IntReg dst = (pEntry->dstofs & ShuffleEntry::OFSREGMASK) + argRegBase;
-                IntReg src = (pEntry->srcofs & ShuffleEntry::OFSREGMASK) + argRegBase;
-                assert(dst < src);
-                EmitMovReg(dst, src);
-            }
-        }
-        else if (pEntry->dstofs & ShuffleEntry::REGMASK)
-        {
-            // source must be on the stack
-            _ASSERTE(!(pEntry->srcofs & ShuffleEntry::REGMASK));
-
-            int dstReg = (pEntry->dstofs & ShuffleEntry::OFSREGMASK) + argRegBase;
-            int srcOfs = (pEntry->srcofs & ShuffleEntry::OFSMASK) * sizeof(void*);
-            if (pEntry->dstofs & ShuffleEntry::FPREGMASK)
-            {
-                if (!is_store)
-                {
-                    delay_index[index++] = i;
-                    continue;
-                }
-                EmitLoad(FloatReg(dstReg), RegSp, srcOfs);
-            }
-            else
-            {
-                EmitLoad(IntReg(dstReg), RegSp, srcOfs);
-            }
-        }
-        else
-        {
-            // source & dest must be on the stack
-            _ASSERTE(!(pEntry->srcofs & ShuffleEntry::REGMASK));
-            _ASSERTE(!(pEntry->dstofs & ShuffleEntry::REGMASK));
-
-            IntReg t4 = 29;
-            EmitLoad(t4, RegSp, pEntry->srcofs * sizeof(void*));
-            EmitStore(t4, RegSp, pEntry->dstofs * sizeof(void*));
+            unsigned src = dst + 1;
+            _ASSERTE(src == GetStackSlot(entry->srcofs));
+            _ASSERTE(dst == GetStackSlot(entry->dstofs));
+            EmitLoad (intTempReg, RegSp, src * sizeof(void*));
+            EmitStore(intTempReg, RegSp, dst * sizeof(void*));
         }
     }
-    // Tailcall to target
-    // jalr x0, 0(t6)
-    EmitJumpRegister(t6);
+
+    EmitJumpRegister(t6); // Tailcall to target
 }
 
 // Emits code to adjust arguments for static delegate target.
@@ -1323,26 +1206,24 @@ VOID StubLinkerCPU::EmitComputedInstantiatingMethodStub(MethodDesc* pSharedMD, s
 
     for (ShuffleEntry* pEntry = pShuffleEntryArray; pEntry->srcofs != ShuffleEntry::SENTINEL; pEntry++)
     {
-        _ASSERTE(pEntry->dstofs & ShuffleEntry::REGMASK);
-        _ASSERTE(pEntry->srcofs & ShuffleEntry::REGMASK);
-        _ASSERTE(!(pEntry->dstofs & ShuffleEntry::FPREGMASK));
-        _ASSERTE(!(pEntry->srcofs & ShuffleEntry::FPREGMASK));
+        _ASSERTE(!IsRegisterFloating(pEntry->srcofs));
+        _ASSERTE(!IsRegisterFloating(pEntry->dstofs));
         _ASSERTE(pEntry->dstofs != ShuffleEntry::HELPERREG);
         _ASSERTE(pEntry->srcofs != ShuffleEntry::HELPERREG);
-
-        EmitMovReg(IntReg((pEntry->dstofs & ShuffleEntry::OFSREGMASK) + 10), IntReg((pEntry->srcofs & ShuffleEntry::OFSREGMASK) + 10));
+        EmitMovReg(IntReg(GetRegister(pEntry->dstofs)), IntReg(GetRegister(pEntry->srcofs)));
     }
 
     MetaSig msig(pSharedMD);
     ArgIterator argit(&msig);
 
+    static const IntReg a0 = argRegBase + 0;
     if (argit.HasParamType())
     {
         ArgLocDesc sInstArgLoc;
         argit.GetParamTypeLoc(&sInstArgLoc);
         int regHidden = sInstArgLoc.m_idxGenReg;
         _ASSERTE(regHidden != -1);
-        regHidden += 10;//NOTE: RISCV64 should start at a0=10;
+        regHidden += argRegBase;//NOTE: RISCV64 should start at a0=10;
 
         if (extraArg == NULL)
         {
@@ -1350,8 +1231,7 @@ VOID StubLinkerCPU::EmitComputedInstantiatingMethodStub(MethodDesc* pSharedMD, s
             {
                 // Unboxing stub case
                 // Fill param arg with methodtable of this pointer
-                // ld regHidden, a0, 0
-                EmitLoad(IntReg(regHidden), IntReg(10));
+                EmitLoad(IntReg(regHidden), a0);
             }
         }
         else
@@ -1364,8 +1244,7 @@ VOID StubLinkerCPU::EmitComputedInstantiatingMethodStub(MethodDesc* pSharedMD, s
     {
         // Unboxing stub case
         // Address of the value type is address of the boxed instance plus sizeof(MethodDesc*).
-        //  addi a0, a0, sizeof(MethodDesc*)
-        EmitAddImm(IntReg(10), IntReg(10), sizeof(MethodDesc*));
+        EmitAddImm(a0, a0, sizeof(MethodDesc*));
     }
 
     // Tail call the real target.
@@ -1375,6 +1254,8 @@ VOID StubLinkerCPU::EmitComputedInstantiatingMethodStub(MethodDesc* pSharedMD, s
 
 void StubLinkerCPU::EmitCallLabel(CodeLabel *target, BOOL fTailCall, BOOL fIndirect)
 {
+    STANDARD_VM_CONTRACT;
+
     BranchInstructionFormat::VariationCodes variationCode = BranchInstructionFormat::VariationCodes::BIF_VAR_JUMP;
     if (!fTailCall)
         variationCode = static_cast<BranchInstructionFormat::VariationCodes>(variationCode | BranchInstructionFormat::VariationCodes::BIF_VAR_CALL);
@@ -1386,10 +1267,14 @@ void StubLinkerCPU::EmitCallLabel(CodeLabel *target, BOOL fTailCall, BOOL fIndir
 
 void StubLinkerCPU::EmitCallManagedMethod(MethodDesc *pMD, BOOL fTailCall)
 {
+    STANDARD_VM_CONTRACT;
+
+    PCODE multiCallableAddr = pMD->TryGetMultiCallableAddrOfCode(CORINFO_ACCESS_PREFER_SLOT_OVER_TEMPORARY_ENTRYPOINT);
+
     // Use direct call if possible.
-    if (pMD->HasStableEntryPoint())
+    if (multiCallableAddr != (PCODE)NULL)
     {
-        EmitCallLabel(NewExternalCodeLabel((LPVOID)pMD->GetStableEntryPoint()), fTailCall, FALSE);
+        EmitCallLabel(NewExternalCodeLabel((LPVOID)multiCallableAddr), fTailCall, FALSE);
     }
     else
     {
@@ -1403,86 +1288,492 @@ void StubLinkerCPU::EmitCallManagedMethod(MethodDesc *pMD, BOOL fTailCall)
 //
 // Allocation of dynamic helpers
 //
-
 #define DYNAMIC_HELPER_ALIGNMENT sizeof(TADDR)
 
-#define BEGIN_DYNAMIC_HELPER_EMIT(size) \
-    _ASSERTE(!"RISCV64: not implementation on riscv64!!!");
-#define END_DYNAMIC_HELPER_EMIT() \
-    _ASSERTE(!"RISCV64: not implementation on riscv64!!!");
+#define BEGIN_DYNAMIC_HELPER_EMIT_WORKER(size) \
+    SIZE_T cb = size; \
+    SIZE_T cbAligned = ALIGN_UP(cb, DYNAMIC_HELPER_ALIGNMENT); \
+    BYTE * pStartRX = (BYTE *)(void*)pAllocator->GetDynamicHelpersHeap()->AllocAlignedMem(cbAligned, DYNAMIC_HELPER_ALIGNMENT); \
+    ExecutableWriterHolder<BYTE> startWriterHolder(pStartRX, cbAligned); \
+    BYTE * pStart = startWriterHolder.GetRW(); \
+    size_t rxOffset = pStartRX - pStart; \
+    BYTE * p = pStart;
 
-// Uses x8 as scratch register to store address of data label
-// After load x8 is increment to point to next data
-// only accepts positive offsets
-static void LoadRegPair(BYTE* p, int reg1, int reg2, UINT32 offset)
-{
-    _ASSERTE(!"RISCV64: not implementation on riscv64!!!");
-}
+#ifdef FEATURE_PERFMAP
+#define BEGIN_DYNAMIC_HELPER_EMIT(size) \
+    BEGIN_DYNAMIC_HELPER_EMIT_WORKER(size) \
+    PerfMap::LogStubs(__FUNCTION__, "DynamicHelper", (PCODE)p, size, PerfMapStubType::Individual);
+#else
+#define BEGIN_DYNAMIC_HELPER_EMIT(size) BEGIN_DYNAMIC_HELPER_EMIT_WORKER(size)
+#endif
+
+#define END_DYNAMIC_HELPER_EMIT() \
+    _ASSERTE(pStart + cb == p); \
+    while (p < pStart + cbAligned) { *(DWORD*)p = 0xffffff0f/*badcode*/; p += 4; }\
+    ClrFlushInstructionCache(pStart, cbAligned); \
+    return (PCODE)pStart
 
 PCODE DynamicHelpers::CreateHelper(LoaderAllocator * pAllocator, TADDR arg, PCODE target)
 {
-    _ASSERTE(!"RISCV64: not implementation on riscv64!!!");
-    return NULL;
+    STANDARD_VM_CONTRACT;
+
+    BEGIN_DYNAMIC_HELPER_EMIT(32);
+
+    const IntReg RegR0 = 0, RegT0 = 5, RegA0 = 10;
+
+    *(DWORD*)p = UTypeInstr(0x17, RegT0, 0);// auipc t0, 0
+    p += 4;
+    *(DWORD*)p = ITypeInstr(0x3, 0x3, RegA0, RegT0, 16);// ld a0, 16(t0)
+    p += 4;
+    *(DWORD*)p = ITypeInstr(0x3, 0x3, RegT0, RegT0, 24);// ld t0, 24(t0)
+    p += 4;
+    *(DWORD*)p = ITypeInstr(0x67, 0, RegR0, RegT0, 0);// jalr zero, 0(t0)
+    p += 4;
+
+    // label:
+    // arg
+    *(TADDR*)p = arg;
+    p += 8;
+    // target
+    *(PCODE*)p = target;
+    p += 8;
+
+    END_DYNAMIC_HELPER_EMIT();
 }
 
 // Caller must ensure sufficient byte are allocated including padding (if applicable)
 void DynamicHelpers::EmitHelperWithArg(BYTE*& p, size_t rxOffset, LoaderAllocator * pAllocator, TADDR arg, PCODE target)
 {
-    _ASSERTE(!"RISCV64: not implementation on riscv64!!!");
+    STANDARD_VM_CONTRACT;
+
+    const IntReg RegR0 = 0, RegT0 = 5, RegA1 = 11;
+
+    *(DWORD*)p = UTypeInstr(0x17, RegT0, 0);// auipc t0, 0
+    p += 4;
+    *(DWORD*)p = ITypeInstr(0x3, 0x3, RegA1, RegT0, 16);// ld a1, 16(t0)
+    p += 4;
+    *(DWORD*)p = ITypeInstr(0x3, 0x3, RegT0, RegT0, 24);// ld t0, 24(t0)
+    p += 4;
+    *(DWORD*)p = ITypeInstr(0x67, 0, RegR0, RegT0, 0);// jalr zero, 0(t0)
+    p += 4;
+
+    // label:
+    // arg
+    *(TADDR*)p = arg;
+    p += 8;
+    // target
+    *(PCODE*)p = target;
+    p += 8;
 }
 
 PCODE DynamicHelpers::CreateHelperWithArg(LoaderAllocator * pAllocator, TADDR arg, PCODE target)
 {
-    _ASSERTE(!"RISCV64: not implementation on riscv64!!!");
-    return NULL;
+    STANDARD_VM_CONTRACT;
+
+    BEGIN_DYNAMIC_HELPER_EMIT(32);
+
+    EmitHelperWithArg(p, rxOffset, pAllocator, arg, target);
+
+    END_DYNAMIC_HELPER_EMIT();
 }
 
 PCODE DynamicHelpers::CreateHelper(LoaderAllocator * pAllocator, TADDR arg, TADDR arg2, PCODE target)
 {
-    _ASSERTE(!"RISCV64: not implementation on riscv64!!!");
-    return NULL;
+    STANDARD_VM_CONTRACT;
+
+    BEGIN_DYNAMIC_HELPER_EMIT(48);
+
+    const IntReg RegR0 = 0, RegT0 = 5, RegA0 = 10, RegA1 = 11;
+
+    *(DWORD*)p = UTypeInstr(0x17, RegT0, 0);// auipc t0, 0
+    p += 4;
+    *(DWORD*)p = ITypeInstr(0x3, 0x3, RegA0, RegT0, 24);// ld a0, 24(t0)
+    p += 4;
+    *(DWORD*)p = ITypeInstr(0x3, 0x3, RegA1, RegT0, 32);// ld a1, 32(t0)
+    p += 4;
+    *(DWORD*)p = ITypeInstr(0x3, 0x3, RegT0, RegT0, 40);// ld t0, 40(t0)
+    p += 4;
+    *(DWORD*)p = ITypeInstr(0x67, 0, RegR0, RegT0, 0);// jalr x0, 0(t0)
+    p += 4;
+
+    *(DWORD*)p = ITypeInstr(0x13, 0, RegR0, RegR0, 0);// nop, padding to make 8 byte aligned
+    p += 4;
+
+    // label:
+    // arg
+    *(TADDR*)p = arg;
+    p += 8;
+    // arg2
+    *(TADDR*)p = arg2;
+    p += 8;
+    // target
+    *(TADDR*)p = target;
+    p += 8;
+
+    END_DYNAMIC_HELPER_EMIT();
 }
 
 PCODE DynamicHelpers::CreateHelperArgMove(LoaderAllocator * pAllocator, TADDR arg, PCODE target)
 {
-    _ASSERTE(!"RISCV64: not implementation on riscv64!!!");
-    return NULL;
+    STANDARD_VM_CONTRACT;
+
+    BEGIN_DYNAMIC_HELPER_EMIT(40);
+
+    const IntReg RegR0 = 0, RegT0 = 5, RegA0 = 10, RegA1 = 11;
+
+    *(DWORD*)p = UTypeInstr(0x17, RegT0, 0);// auipc t0, 0
+    p += 4;
+    *(DWORD*)p = ITypeInstr(0x13, 0, RegA1, RegA0, 0);// addi a1, a0, 0
+    p += 4;
+    *(DWORD*)p = ITypeInstr(0x3, 0x3, RegA0, RegT0, 24);// ld a0, 24(t0)
+    p += 4;
+    *(DWORD*)p = ITypeInstr(0x3, 0x3, RegT0, RegT0, 32);// ld t0, 32(t0)
+    p += 4;
+    *(DWORD*)p = ITypeInstr(0x67, 0, RegR0, RegT0, 0);// jalr x0, 0(t0)
+    p += 4;
+
+    *(DWORD*)p = ITypeInstr(0x13, 0, RegR0, RegR0, 0);// nop, padding to make 8 byte aligned
+    p += 4;
+
+    // label:
+    // arg
+    *(TADDR*)p = arg;
+    p += 8;
+    // target
+    *(TADDR*)p = target;
+    p += 8;
+
+    END_DYNAMIC_HELPER_EMIT();
 }
 
 PCODE DynamicHelpers::CreateReturn(LoaderAllocator * pAllocator)
 {
-    _ASSERTE(!"RISCV64: not implementation on riscv64!!!");
-    return NULL;
+    STANDARD_VM_CONTRACT;
+
+    BEGIN_DYNAMIC_HELPER_EMIT(4);
+
+    const IntReg RegR0 = 0, RegRa = 1;
+
+    *(DWORD*)p = ITypeInstr(0x67, 0, RegR0, RegRa, 0);// ret
+    p += 4;
+
+    END_DYNAMIC_HELPER_EMIT();
 }
 
 PCODE DynamicHelpers::CreateReturnConst(LoaderAllocator * pAllocator, TADDR arg)
 {
-    _ASSERTE(!"RISCV64: not implementation on riscv64!!!");
-    return NULL;
+    STANDARD_VM_CONTRACT;
+
+    BEGIN_DYNAMIC_HELPER_EMIT(24);
+
+    const IntReg RegR0 = 0, RegRa = 1, RegT0 = 5, RegA0 = 10;
+
+    *(DWORD*)p = UTypeInstr(0x17, RegT0, 0);// auipc t0, 0
+    p += 4;
+    *(DWORD*)p = ITypeInstr(0x3, 0x3, RegA0, RegT0, 16);// ld a0, 16(t0)
+    p += 4;
+    *(DWORD*)p = ITypeInstr(0x67, 0, RegR0, RegRa, 0);// ret
+    p += 4;
+    *(DWORD*)p = ITypeInstr(0x13, 0, RegR0, RegR0, 0);// nop, padding to make 8 byte aligned
+    p += 4;
+
+    // label:
+    // arg
+    *(TADDR*)p = arg;
+    p += 8;
+
+    END_DYNAMIC_HELPER_EMIT();
 }
 
 PCODE DynamicHelpers::CreateReturnIndirConst(LoaderAllocator * pAllocator, TADDR arg, INT8 offset)
 {
-    _ASSERTE(!"RISCV64: not implementation on riscv64!!!");
-    return NULL;
+    STANDARD_VM_CONTRACT;
+
+    BEGIN_DYNAMIC_HELPER_EMIT(32);
+
+    const IntReg RegR0 = 0, RegRa = 1, RegT0 = 5, RegA0 = 10;
+
+    *(DWORD*)p = UTypeInstr(0x17, RegT0, 0);// auipc t0, 0
+    p += 4;
+    *(DWORD*)p = ITypeInstr(0x3, 0x3, RegA0, RegT0, 24);// ld a0, 24(t0)
+    p += 4;
+    *(DWORD*)p = ITypeInstr(0x3, 0x3, RegA0, RegA0, 0);// ld a0,0(a0)
+    p += 4;
+    *(DWORD*)p = ITypeInstr(0x13, 0, RegA0, RegA0, offset & 0xfff);// addi a0, a0, offset
+    p += 4;
+    *(DWORD*)p = ITypeInstr(0x67, 0, RegR0, RegRa, 0);// ret
+    p += 4;
+    *(DWORD*)p = ITypeInstr(0x13, 0, RegR0, RegR0, 0);// nop, padding to make 8 byte aligned
+    p += 4;
+
+    // label:
+    // arg
+    *(TADDR*)p = arg;
+    p += 8;
+
+    END_DYNAMIC_HELPER_EMIT();
 }
 
 PCODE DynamicHelpers::CreateHelperWithTwoArgs(LoaderAllocator * pAllocator, TADDR arg, PCODE target)
 {
-    _ASSERTE(!"RISCV64: not implementation on riscv64!!!");
-    return NULL;
+    STANDARD_VM_CONTRACT;
+
+    BEGIN_DYNAMIC_HELPER_EMIT(32);
+
+    const IntReg RegR0 = 0, RegT0 = 5, RegA2 = 12;
+
+    *(DWORD*)p = UTypeInstr(0x17, RegT0, 0);// auipc t0, 0
+    p += 4;
+    *(DWORD*)p = ITypeInstr(0x3, 0x3, RegA2, RegT0, 16);// ld a2,16(t0)
+    p += 4;
+    *(DWORD*)p = ITypeInstr(0x3, 0x3, RegT0, RegT0, 24);// ld t0,24(t0)
+    p += 4;
+    *(DWORD*)p = ITypeInstr(0x67, 0, RegR0, RegT0, 0);// jalr x0, 0(t0)
+    p += 4;
+
+    // label:
+    // arg
+    *(TADDR*)p = arg;
+    p += 8;
+
+    // target
+    *(TADDR*)p = target;
+    p += 8;
+    END_DYNAMIC_HELPER_EMIT();
 }
 
 PCODE DynamicHelpers::CreateHelperWithTwoArgs(LoaderAllocator * pAllocator, TADDR arg, TADDR arg2, PCODE target)
 {
-    _ASSERTE(!"RISCV64: not implementation on riscv64!!!");
-    return NULL;
+    STANDARD_VM_CONTRACT;
+
+    BEGIN_DYNAMIC_HELPER_EMIT(48);
+
+    const IntReg RegR0 = 0, RegT0 = 5, RegA2 = 12, RegA3 = 13;
+
+    *(DWORD*)p = UTypeInstr(0x17, RegT0, 0);// auipc t0, 0
+    p += 4;
+    *(DWORD*)p = ITypeInstr(0x3, 0x3, RegA2, RegT0, 24);// ld a2,24(t0)
+    p += 4;
+    *(DWORD*)p = ITypeInstr(0x3, 0x3, RegA3, RegT0, 32);// ld a3,32(t0)
+    p += 4;
+    *(DWORD*)p = ITypeInstr(0x3, 0x3, RegT0, RegT0, 40);// ld t0,40(t0)
+    p += 4;
+    *(DWORD*)p = ITypeInstr(0x67, 0, RegR0, RegT0, 0);// jalr x0, 0(t0)
+    p += 4;
+    *(DWORD*)p = ITypeInstr(0x13, 0, RegR0, RegR0, 0);// nop, padding to make 8 byte aligned
+    p += 4;
+
+    // label:
+    // arg
+    *(TADDR*)p = arg;
+    p += 8;
+    // arg2
+    *(TADDR*)p = arg2;
+    p += 8;
+    // target
+    *(TADDR*)p = target;
+    p += 8;
+    END_DYNAMIC_HELPER_EMIT();
 }
 
 PCODE DynamicHelpers::CreateDictionaryLookupHelper(LoaderAllocator * pAllocator, CORINFO_RUNTIME_LOOKUP * pLookup, DWORD dictionaryIndexAndSlot, Module * pModule)
 {
-    _ASSERTE(!"RISCV64: not implementation on riscv64!!!");
-    return NULL;
+    STANDARD_VM_CONTRACT;
+    const IntReg RegR0 = 0, RegA0 = 10, RegT2 = 7, RegT4 = 29, RegT5 = 30;
+
+    PCODE helperAddress = GetDictionaryLookupHelper(pLookup->helper);
+
+    GenericHandleArgs * pArgs = (GenericHandleArgs *)(void *)pAllocator->GetDynamicHelpersHeap()->AllocAlignedMem(sizeof(GenericHandleArgs), DYNAMIC_HELPER_ALIGNMENT);
+    ExecutableWriterHolder<GenericHandleArgs> argsWriterHolder(pArgs, sizeof(GenericHandleArgs));
+    argsWriterHolder.GetRW()->dictionaryIndexAndSlot = dictionaryIndexAndSlot;
+    argsWriterHolder.GetRW()->signature = pLookup->signature;
+    argsWriterHolder.GetRW()->module = (CORINFO_MODULE_HANDLE)pModule;
+
+    WORD slotOffset = (WORD)(dictionaryIndexAndSlot & 0xFFFF) * sizeof(Dictionary*);
+
+    // It's available only via the run-time helper function
+    if (pLookup->indirections == CORINFO_USEHELPER)
+    {
+        BEGIN_DYNAMIC_HELPER_EMIT(32);
+
+        // a0 already contains generic context parameter
+        // reuse EmitHelperWithArg for below two operations
+        // a1 <- pArgs
+        // branch to helperAddress
+        EmitHelperWithArg(p, rxOffset, pAllocator, (TADDR)pArgs, helperAddress);
+
+        END_DYNAMIC_HELPER_EMIT();
+    }
+    else
+    {
+        int codeSize = 0;
+        int indirectionsDataSize = 0;
+        if (pLookup->testForNull || pLookup->sizeOffset != CORINFO_NO_SIZE_CHECK)
+        {
+            //mv t2, a0
+            codeSize += 4;
+        }
+
+        for (WORD i = 0; i < pLookup->indirections; i++) {
+            _ASSERTE(pLookup->offsets[i] >= 0);
+            if (i == pLookup->indirections - 1 && pLookup->sizeOffset != CORINFO_NO_SIZE_CHECK)
+            {
+                codeSize += (pLookup->sizeOffset > 2047 ? 24 : 16);
+                indirectionsDataSize += (pLookup->sizeOffset > 2047 ? 4 : 0);
+            }
+
+            codeSize += (pLookup->offsets[i] > 2047 ? 12 : 4); // if( > 2047) (12 bytes) else 4 bytes for instructions.
+            indirectionsDataSize += (pLookup->offsets[i] > 2047 ? 4 : 0); // 4 bytes for storing indirection offset values
+        }
+
+        codeSize += indirectionsDataSize ? 4 : 0; // auipc
+
+        if (pLookup->testForNull)
+        {
+            codeSize += 12; // beq-ret-addi
+
+            //padding for 8-byte align (required by EmitHelperWithArg)
+            codeSize = ALIGN_UP(codeSize, 8);
+
+            codeSize += 32; // size of EmitHelperWithArg
+        }
+        else
+        {
+            codeSize += 4; /* jalr */
+        }
+
+        // the offset value of data_label.
+        uint dataOffset = codeSize;
+
+        codeSize += indirectionsDataSize;
+
+        BEGIN_DYNAMIC_HELPER_EMIT(codeSize);
+
+        BYTE * old_p = p;
+
+        if (indirectionsDataSize)
+        {
+            _ASSERTE(codeSize < 2047);
+
+            //auipc t4, 0
+            *(DWORD*)p = UTypeInstr(0x17, RegT4, 0);
+            p += 4;
+        }
+
+        if (pLookup->testForNull || pLookup->sizeOffset != CORINFO_NO_SIZE_CHECK)
+        {
+            *(DWORD*)p = ITypeInstr(0x13, 0, RegT2, RegA0, 0);// addi t2, a0, 0
+            p += 4;
+        }
+
+        BYTE* pBLECall = NULL;
+
+        for (WORD i = 0; i < pLookup->indirections; i++)
+        {
+            if (i == pLookup->indirections - 1 && pLookup->sizeOffset != CORINFO_NO_SIZE_CHECK)
+            {
+                _ASSERTE(pLookup->testForNull && i > 0);
+
+                if (pLookup->sizeOffset > 2047)
+                {
+                    *(DWORD*)p = ITypeInstr(0x3, 0x2, RegT4, RegT4, dataOffset);// lw  t4, dataOffset(t4)
+                    p += 4;
+                    *(DWORD*)p = RTypeInstr(0x33, 0, 0, RegT5, RegA0, RegT4);// add  t5, a0, t4
+                    p += 4;
+                    *(DWORD*)p = ITypeInstr(0x3, 0x3, RegT5, RegT5, 0);// ld  t5, 0(t5)
+                    p += 4;
+
+                    // move to next indirection offset data
+                    dataOffset += 4;
+                }
+                else
+                {
+                    *(DWORD*)p = ITypeInstr(0x3, 0x3, RegT5, RegA0, (UINT32)pLookup->sizeOffset);// ld  t5, #(pLookup->sizeOffset)(a0)
+                    p += 4;
+                }
+                // lui  t4, (slotOffset&0xfffff000)>>12
+                *(DWORD*)p = UTypeInstr(0x37, RegT4, (((UINT32)slotOffset & 0xfffff000) >> 12));
+                p += 4;
+                *(DWORD*)p = ITypeInstr(0x13, 0, RegT4, RegT4, slotOffset & 0xfff);// addi  t4, t4, (slotOffset&0xfff)
+                p += 4;
+                // bge  t4, t5, CALL HELPER
+                pBLECall = p;       // Offset filled later
+                p += 4;
+            }
+
+            if (pLookup->offsets[i] > 2047)
+            {
+                _ASSERTE(dataOffset < 2047);
+                *(DWORD*)p = ITypeInstr(0x3, 0x2, RegT4, RegT4, dataOffset & 0xfff);// lw  t4, dataOffset(t4)
+                p += 4;
+                *(DWORD*)p = RTypeInstr(0x33, 0, 0, RegA0, RegA0, RegT4);// add  a0, a0, t4
+                p += 4;
+                *(DWORD*)p = ITypeInstr(0x3, 0x2, RegA0, RegA0, 0);// lw  a0, 0(a0)
+                p += 4;
+                // move to next indirection offset data
+                dataOffset += 4; // add 4 as next data is at 4 bytes from previous data
+            }
+            else
+            {
+                // offset must be 8 byte aligned
+                _ASSERTE((pLookup->offsets[i] & 0x7) == 0);
+                *(DWORD*)p = ITypeInstr(0x3, 0x3, RegA0, RegA0, (UINT32)pLookup->offsets[i]);// ld  a0, #(pLookup->offsets[i])(a0)
+                p += 4;
+            }
+        }
+
+        // No null test required
+        if (!pLookup->testForNull)
+        {
+            _ASSERTE(pLookup->sizeOffset == CORINFO_NO_SIZE_CHECK);
+            *(DWORD*)p = ITypeInstr(0x67, 0, RegR0, RegRa, 0);// ret
+            p += 4;
+        }
+        else
+        {
+            // beq  a0, x0, CALL HELPER:
+            *(DWORD*)p = BTypeInstr(0x63, 0, RegA0, RegR0, 8);
+            p += 4;
+
+            *(DWORD*)p = ITypeInstr(0x67, 0, RegR0, RegRa, 0);// ret
+            p += 4;
+
+            // CALL HELPER:
+            if (pBLECall != NULL)
+                *(DWORD*)pBLECall = BTypeInstr(0x63, 0x5, RegT4, RegT5, (UINT32)(p - pBLECall));
+
+            *(DWORD*)p = ITypeInstr(0x13, 0, RegA0, RegT2, 0);// addi  a0, t2, 0
+            p += 4;
+            if ((uintptr_t)(p - old_p) & 0x7)
+            {
+                // nop, padding for 8-byte align (required by EmitHelperWithArg)
+                *(DWORD*)p = ITypeInstr(0x13, 0, RegR0, RegR0, 0);
+                p += 4;
+            }
+
+            // reuse EmitHelperWithArg for below two operations
+            // a1 <- pArgs
+            // branch to helperAddress
+            EmitHelperWithArg(p, rxOffset, pAllocator, (TADDR)pArgs, helperAddress);
+        }
+
+        // data_label:
+        for (WORD i = 0; i < pLookup->indirections; i++)
+        {
+            if (i == pLookup->indirections - 1 && pLookup->sizeOffset != CORINFO_NO_SIZE_CHECK && pLookup->sizeOffset > 2047)
+            {
+                *(UINT32*)p = (UINT32)pLookup->sizeOffset;
+                p += 4;
+            }
+            if (pLookup->offsets[i] > 2047)
+            {
+                *(UINT32*)p = (UINT32)pLookup->offsets[i];
+                p += 4;
+            }
+        }
+
+        END_DYNAMIC_HELPER_EMIT();
+    }
 }
 #endif // FEATURE_READYTORUN
 

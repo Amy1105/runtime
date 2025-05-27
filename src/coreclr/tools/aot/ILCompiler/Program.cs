@@ -9,7 +9,7 @@ using System.CommandLine;
 using System.CommandLine.Help;
 using System.CommandLine.Parsing;
 using System.IO;
-using System.Reflection;
+using System.Reflection.Metadata;
 using System.Runtime.CompilerServices;
 using System.Runtime.InteropServices;
 using System.Text;
@@ -20,6 +20,7 @@ using Internal.TypeSystem;
 using Internal.TypeSystem.Ecma;
 
 using ILCompiler.Dataflow;
+using ILCompiler.DependencyAnalysis;
 using ILLink.Shared;
 
 using Debug = System.Diagnostics.Debug;
@@ -51,20 +52,28 @@ namespace ILCompiler
             // any user code runs.
             foreach (string initAssemblyName in Get(_command.InitAssemblies))
             {
-                ModuleDesc assembly = context.ResolveAssembly(new AssemblyName(initAssemblyName), throwIfNotFound: true);
+                ModuleDesc assembly = context.ResolveAssembly(new AssemblyNameInfo(initAssemblyName), throwIfNotFound: true);
                 assembliesWithInitializers.Add(assembly);
             }
 
             var libraryInitializers = new LibraryInitializers(context, assembliesWithInitializers);
 
-            return libraryInitializers.LibraryInitializerMethods;
+            IReadOnlyCollection<MethodDesc> result = libraryInitializers.LibraryInitializerMethods;
+
+            if (Get(_command.InstrumentReachability))
+            {
+                List<MethodDesc> instrumentedResult = new List<MethodDesc>(result);
+                instrumentedResult.Add(ReachabilityInstrumentationProvider.CreateInitializerMethod(context));
+                result = instrumentedResult;
+            }
+            return result;
         }
 
         public int Run()
         {
             string outputFilePath = Get(_command.OutputFilePath);
             if (outputFilePath == null)
-                throw new CommandLineException("Output filename must be specified (/out <file>)");
+                throw new CommandLineException("Output filename must be specified (--out <file>)");
 
             var suppressedWarningCategories = new List<string>();
             if (Get(_command.NoTrimWarn))
@@ -74,8 +83,18 @@ namespace ILCompiler
 
             ILProvider ilProvider = new NativeAotILProvider();
 
+            Dictionary<int, bool> warningsAsErrors = new Dictionary<int, bool>();
+            foreach (int warning in ProcessWarningCodes(Get(_command.WarningsAsErrorsEnable)))
+            {
+                warningsAsErrors[warning] = true;
+            }
+            foreach (int warning in ProcessWarningCodes(Get(_command.WarningsAsErrorsDisable)))
+            {
+                warningsAsErrors[warning] = false;
+            }
             var logger = new Logger(Console.Out, ilProvider, Get(_command.IsVerbose), ProcessWarningCodes(Get(_command.SuppressedWarnings)),
-                Get(_command.SingleWarn), Get(_command.SingleWarnEnabledAssemblies), Get(_command.SingleWarnDisabledAssemblies), suppressedWarningCategories);
+                Get(_command.SingleWarn), Get(_command.SingleWarnEnabledAssemblies), Get(_command.SingleWarnDisabledAssemblies), suppressedWarningCategories,
+                Get(_command.TreatWarningsAsErrors), warningsAsErrors);
 
             // NativeAOT is full AOT and its pre-compiled methods can not be
             // thrown away at runtime if they mismatch in required ISAs or
@@ -102,7 +121,7 @@ namespace ILCompiler
             SharedGenericsMode genericsMode = SharedGenericsMode.CanonicalReferenceTypes;
 
             var simdVectorLength = instructionSetSupport.GetVectorTSimdVector();
-            var targetAbi = TargetAbi.NativeAot;
+            var targetAbi = ILCompilerRootCommand.IsArmel ? TargetAbi.NativeAotArmel : TargetAbi.NativeAot;
             var targetDetails = new TargetDetails(targetArchitecture, targetOS, targetAbi, simdVectorLength);
             CompilerTypeSystemContext typeSystemContext =
                 new CompilerTypeSystemContext(targetDetails, genericsMode, supportsReflection ? DelegateFeature.All : 0,
@@ -142,6 +161,11 @@ namespace ILCompiler
 
             if (typeSystemContext.InputFilePaths.Count == 0)
                 throw new CommandLineException("No input files specified");
+
+            ilProvider = new HardwareIntrinsicILProvider(
+                instructionSetSupport,
+                new ExternSymbolMappedField(typeSystemContext.GetWellKnownType(WellKnownType.Int32), "g_cpuFeatures"),
+                ilProvider);
 
             SecurityMitigationOptions securityMitigationOptions = 0;
             string guard = Get(_command.Guard);
@@ -257,15 +281,19 @@ namespace ILCompiler
                     compilationRoots.Add(new Win32ResourcesRootProvider(module));
                 }
 
-                foreach (var unmanagedEntryPointsAssembly in Get(_command.UnmanagedEntryPointsAssemblies))
+                foreach (var unmanagedEntryPointsAssemblyValue in Get(_command.UnmanagedEntryPointsAssemblies))
                 {
+                    const string hiddenSuffix = ",HIDDEN";
+                    bool hidden = unmanagedEntryPointsAssemblyValue.EndsWith(hiddenSuffix, StringComparison.Ordinal);
+                    string unmanagedEntryPointsAssembly = hidden ? unmanagedEntryPointsAssemblyValue[..^hiddenSuffix.Length] : unmanagedEntryPointsAssemblyValue;
+
                     if (typeSystemContext.InputFilePaths.ContainsKey(unmanagedEntryPointsAssembly))
                     {
                         // Skip adding UnmanagedEntryPointsRootProvider for modules that have been already registered as an input module
                         continue;
                     }
                     EcmaModule module = typeSystemContext.GetModuleForSimpleName(unmanagedEntryPointsAssembly);
-                    compilationRoots.Add(new UnmanagedEntryPointsRootProvider(module));
+                    compilationRoots.Add(new UnmanagedEntryPointsRootProvider(module, hidden));
                 }
 
                 foreach (var rdXmlFilePath in Get(_command.RdXmlFilePaths))
@@ -320,10 +348,10 @@ namespace ILCompiler
             // Compile
             //
 
-            var builder = new RyuJitCompilationBuilder(typeSystemContext, compilationGroup);
-
             string compilationUnitPrefix = multiFile ? Path.GetFileNameWithoutExtension(outputFilePath) : "";
-            builder.UseCompilationUnitPrefix(compilationUnitPrefix);
+            var builder = new RyuJitCompilationBuilder(typeSystemContext, compilationGroup)
+                .FileLayoutAlgorithms(Get(_command.MethodLayout), Get(_command.FileLayout))
+                .UseCompilationUnitPrefix(compilationUnitPrefix);
 
             string[] mibcFilePaths = Get(_command.MibcFilePaths);
             if (mibcFilePaths.Length > 0)
@@ -361,9 +389,16 @@ namespace ILCompiler
                         logger, typeSystemContext, XmlReader.Create(fs), substitutionFilePath, featureSwitches));
             }
 
-            ilProvider = new FeatureSwitchManager(ilProvider, logger, featureSwitches, substitutions);
-
             CompilerGeneratedState compilerGeneratedState = new CompilerGeneratedState(ilProvider, logger);
+
+            if (Get(_command.UseReachability) is string reachabilityInstrumentationFileName)
+            {
+                ilProvider = new ReachabilityInstrumentationFilter(reachabilityInstrumentationFileName, ilProvider);
+            }
+
+            SubstitutionProvider substitutionProvider = new SubstitutionProvider(logger, featureSwitches, substitutions);
+            ILProvider unsubstitutedILProvider = ilProvider;
+            ilProvider = new SubstitutedILProvider(ilProvider, substitutionProvider, new DevirtualizationManager());
 
             var stackTracePolicy = Get(_command.EmitStackTraceData) ?
                 (StackTraceEmissionPolicy)new EcmaMethodStackTraceEmissionPolicy() : new NoStackTraceEmissionPolicy();
@@ -430,7 +465,7 @@ namespace ILCompiler
             TypePreinit.TypePreinitializationPolicy preinitPolicy = preinitStatics ?
                 new TypePreinit.TypeLoaderAwarePreinitializationPolicy() : new TypePreinit.DisabledPreinitializationPolicy();
 
-            var preinitManager = new PreinitializationManager(typeSystemContext, compilationGroup, ilProvider, preinitPolicy);
+            var preinitManager = new PreinitializationManager(typeSystemContext, compilationGroup, ilProvider, preinitPolicy, new StaticReadOnlyFieldPolicy(), flowAnnotations);
             builder
                 .UseILProvider(ilProvider)
                 .UsePreinitializationManager(preinitManager);
@@ -475,9 +510,16 @@ namespace ILCompiler
                 if (scanDgmlLogFileName != null)
                     scanResults.WriteDependencyLog(scanDgmlLogFileName);
 
+                DevirtualizationManager devirtualizationManager = scanResults.GetDevirtualizationManager();
+
                 metadataManager = ((UsageBasedMetadataManager)metadataManager).ToAnalysisBasedMetadataManager();
 
                 interopStubManager = scanResults.GetInteropStubManager(interopStateManager, pinvokePolicy);
+
+                ilProvider = new SubstitutedILProvider(unsubstitutedILProvider, substitutionProvider, devirtualizationManager, metadataManager);
+
+                // Use a more precise IL provider that uses whole program analysis for dead branch elimination
+                builder.UseILProvider(ilProvider);
 
                 // If we have a scanner, feed the vtable analysis results to the compilation.
                 // This could be a command line switch if we really wanted to.
@@ -490,7 +532,7 @@ namespace ILCompiler
                 // If we have a scanner, we can drive devirtualization using the information
                 // we collected at scanning time (effectively sealing unsealed types if possible).
                 // This could be a command line switch if we really wanted to.
-                builder.UseDevirtualizationManager(scanResults.GetDevirtualizationManager());
+                builder.UseDevirtualizationManager(devirtualizationManager);
 
                 // If we use the scanner's result, we need to consult it to drive inlining.
                 // This prevents e.g. devirtualizing and inlining methods on types that were
@@ -507,16 +549,28 @@ namespace ILCompiler
                 // has the whole program view.
                 if (preinitStatics)
                 {
-                    preinitManager = new PreinitializationManager(typeSystemContext, compilationGroup, ilProvider, scanResults.GetPreinitializationPolicy());
-                    builder.UsePreinitializationManager(preinitManager);
+                    var readOnlyFieldPolicy = scanResults.GetReadOnlyFieldPolicy();
+                    preinitManager = new PreinitializationManager(typeSystemContext, compilationGroup, ilProvider, scanResults.GetPreinitializationPolicy(),
+                        readOnlyFieldPolicy, flowAnnotations);
+                    builder.UsePreinitializationManager(preinitManager)
+                        .UseReadOnlyFieldPolicy(readOnlyFieldPolicy);
                 }
 
                 // If we have a scanner, we can inline threadstatics storage using the information we collected at scanning time.
                 if (!Get(_command.NoInlineTls) &&
-                    (targetOS == TargetOS.Linux || (targetArchitecture == TargetArchitecture.X64 && targetOS == TargetOS.Windows)))
+                    ((targetOS == TargetOS.Linux && targetArchitecture is TargetArchitecture.X64 or TargetArchitecture.ARM64) ||
+                     (targetOS == TargetOS.Windows && targetArchitecture is TargetArchitecture.X64 or TargetArchitecture.ARM64)))
                 {
                     builder.UseInlinedThreadStatics(scanResults.GetInlinedThreadStatics());
                 }
+            }
+
+            if (Get(_command.InstrumentReachability))
+            {
+                ReachabilityInstrumentationProvider reachabilityProvider = new ReachabilityInstrumentationProvider(ilProvider);
+                ilProvider = reachabilityProvider;
+                builder.UseILProvider(ilProvider);
+                compilationRoots.Add(reachabilityProvider);
             }
 
             string ilDump = Get(_command.IlDump);
@@ -552,6 +606,7 @@ namespace ILCompiler
 
             string mapFileName = Get(_command.MapFileName);
             string mstatFileName = Get(_command.MstatFileName);
+            string sourceLinkFileName = Get(_command.SourceLinkFileName);
 
             List<ObjectDumper> dumpers = new List<ObjectDumper>();
 
@@ -561,15 +616,22 @@ namespace ILCompiler
             if (mstatFileName != null)
                 dumpers.Add(new MstatObjectDumper(mstatFileName, typeSystemContext));
 
+            if (sourceLinkFileName != null)
+                dumpers.Add(new SourceLinkWriter(sourceLinkFileName));
+
             CompilationResults compilationResults = compilation.Compile(outputFilePath, ObjectDumper.Compose(dumpers));
             string exportsFile = Get(_command.ExportsFile);
             if (exportsFile != null)
             {
-                ExportsFileWriter defFileWriter = new ExportsFileWriter(typeSystemContext, exportsFile);
-                foreach (var compilationRoot in compilationRoots)
+                ExportsFileWriter defFileWriter = new ExportsFileWriter(typeSystemContext, exportsFile, Get(_command.ExportDynamicSymbols));
+
+                if (Get(_command.ExportUnmanagedEntryPoints))
                 {
-                    if (compilationRoot is UnmanagedEntryPointsRootProvider provider)
-                        defFileWriter.AddExportedMethods(provider.ExportedMethods);
+                    foreach (var compilationRoot in compilationRoots)
+                    {
+                        if (compilationRoot is UnmanagedEntryPointsRootProvider provider && !provider.Hidden)
+                            defFileWriter.AddExportedMethods(provider.ExportedMethods);
+                    }
                 }
 
                 defFileWriter.EmitExportedMethods();
@@ -722,15 +784,15 @@ namespace ILCompiler
             }
         }
 
-        private T Get<T>(CliOption<T> option) => _command.Result.GetValue(option);
+        private T Get<T>(Option<T> option) => _command.Result.GetValue(option);
 
         private static int Main(string[] args) =>
-            new CliConfiguration(new ILCompilerRootCommand(args)
+            new CommandLineConfiguration(new ILCompilerRootCommand(args)
                 .UseVersion()
                 .UseExtendedHelp(ILCompilerRootCommand.GetExtendedHelp))
             {
                 ResponseFileTokenReplacer = Helpers.TryReadResponseFile,
-                EnableParseErrorReporting = true
+                EnableDefaultExceptionHandler = false,
             }.Invoke(args);
     }
 }

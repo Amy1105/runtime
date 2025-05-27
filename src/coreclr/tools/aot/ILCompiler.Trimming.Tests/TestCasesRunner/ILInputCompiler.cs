@@ -27,7 +27,7 @@ namespace Mono.Linker.Tests.TestCasesRunner
 			process.WaitForExit ();
 
 			if (process.ExitCode != 0) {
-				Assert.True (false, $"Failed to compile IL assembly : {options.OutputPath}\n{capturedOutput.Aggregate ((buff, s) => buff + Environment.NewLine + s)}");
+				Assert.Fail($"Failed to compile IL assembly : {options.OutputPath}\n{capturedOutput.Aggregate ((buff, s) => buff + Environment.NewLine + s)}");
 			}
 
 			return options.OutputPath;
@@ -45,7 +45,7 @@ namespace Mono.Linker.Tests.TestCasesRunner
 		private static string BuildArguments (CompilerOptions options)
 		{
 			var args = new StringBuilder ();
-#if NETCOREAPP
+#if NET
 			args.Append (options.OutputPath.ExtensionWithDot == ".dll" ? "-dll" : "-exe");
 			args.Append ($" -out:{options.OutputPath.InQuotes ()}");
 #else
@@ -58,7 +58,7 @@ namespace Mono.Linker.Tests.TestCasesRunner
 
 		protected virtual NPath LocateIlasm ()
 		{
-#if NETCOREAPP
+#if NET
 			var extension = RuntimeInformation.IsOSPlatform (OSPlatform.Windows) ? ".exe" : "";
 
 			var toolsDir = (string) AppContext.GetData ("Mono.Linker.Tests.ILToolsDir")!;

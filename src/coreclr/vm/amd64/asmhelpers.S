@@ -8,45 +8,12 @@
 #define real4 dword
 #define real8 qword
 
-#
-#    file: profile.cpp
-#    typedef struct _PROFILE_PLATFORM_SPECIFIC_DATA
-#    {
-#        FunctionID *functionId; # function ID comes in the r11 register
-#        void       *rbp;
-#        void       *probersp;
-#        void       *ip;
-#        void       *profiledRsp;
-#        UINT64      rax;
-#        LPVOID      hiddenArg;
-#        UINT64      flt0;
-#        UINT64      flt1;
-#        UINT64      flt2;
-#        UINT64      flt3;
-#        UINT64      flt4;
-#        UINT64      flt5;
-#        UINT64      flt6;
-#        UINT64      flt7;
-#        UINT64      rdi;
-#        UINT64      rsi;
-#        UINT64      rdx;
-#        UINT64      rcx;
-#        UINT64      r8;
-#        UINT64      r9;
-#        UINT32      flags;
-#        UINT64      buffer[PROFILE_PLATFORM_SPECIFIC_DATA_BUFFER_SIZE];
-#    } PROFILE_PLATFORM_SPECIFIC_DATA, *PPROFILE_PLATFORM_SPECIFIC_DATA;
-
 # On linux arguments can be passed in non-sequential registers. Integer arguments are
 # passed in sequential integer registers and floating point registers are passed in
 # sequential floating point registers. This presents a problem when we go to pass the
 # struct argument as a COR_PRF_FUNCTION_ARGUMENT_RANGE which expects the arguments are
 # in one contiguous range. This space is a scratch space that the ArgIterator can use
 # to copy the structs to so they are sequential.
-.equ SIZEOF_PROFILE_STRUCT_BUFFER, 0x8*16
-
-# Space for register spilling
-.equ SIZEOF_PROFILE_PLATFORM_SPECIFIC_DATA, 0x8*22 + SIZEOF_PROFILE_STRUCT_BUFFER
 
 # Pad the frame size by 0x8 so when the xmm0 and xmm1 register store/restore happens
 # we can align to 16 and be guaranteed to not exceed the frame size
@@ -57,11 +24,7 @@
 # data struct that we spill the general purpose registers to, then space to
 # spill xmm0 and xmm1, then finally 8 bytes of padding to ensure that the xmm
 # register reads/writes are aligned on 16 bytes.
-.equ SIZEOF_STACK_FRAME, SIZEOF_PROFILE_PLATFORM_SPECIFIC_DATA + STACK_FUDGE_FACTOR
-
-.equ PROFILE_ENTER, 0x1
-.equ PROFILE_LEAVE, 0x2
-.equ PROFILE_TAILCALL, 0x4
+.equ SIZEOF_STACK_FRAME, SIZEOF__PROFILE_PLATFORM_SPECIFIC_DATA + STACK_FUDGE_FACTOR
 
 # ***********************************************************
 #   NOTE:
@@ -80,6 +43,14 @@
 #           - upper halves of ymm registers on AVX (which are volatile)
 #
 # ***********************************************************
+
+# EXTERN_C void JIT_ProfilerEnterLeaveTailcallStub(UINT_PTR ProfilerHandle);
+# <NOTE>
+#
+# </NOTE>
+LEAF_ENTRY JIT_ProfilerEnterLeaveTailcallStub, _TEXT
+  ret
+LEAF_END JIT_ProfilerEnterLeaveTailcallStub, _TEXT
 
 # EXTERN_C void ProfileEnterNaked(FunctionIDOrClientID functionIDOrClientID, size_t profiledRsp);
 # <NOTE>
@@ -102,29 +73,29 @@ NESTED_ENTRY ProfileEnterNaked, _TEXT, NoHandler
 
   # setup ProfilePlatformSpecificData structure
   xor                     r11, r11 # nullify r11
-  mov                     [rsp + 0x0], r11    # r11 is null     -- struct functionId field
-  save_reg_postrsp        rbp, 0x8             #                 -- struct rbp field
-  mov                     [rsp + 0x10], rax    # caller rsp      -- struct probeRsp field
-  mov                     [rsp + 0x18], r10    # return address  -- struct ip field
-  mov                     [rsp + 0x20], r15    #                 -- struct profiledRsp field
-  mov                     [rsp + 0x28], r11    # return value    -- struct rax field
-  mov                     [rsp + 0x30], r11    # r11 is null     -- struct hiddenArg field
-  movsd                   real8 ptr [rsp + 0x38], xmm0    #      -- struct flt0 field
-  movsd                   real8 ptr [rsp + 0x40], xmm1    #      -- struct flt1 field
-  movsd                   real8 ptr [rsp + 0x48], xmm2    #      -- struct flt2 field
-  movsd                   real8 ptr [rsp + 0x50], xmm3    #      -- struct flt3 field
-  movsd                   real8 ptr [rsp + 0x58], xmm4    #      -- struct flt4 field
-  movsd                   real8 ptr [rsp + 0x60], xmm5    #      -- struct flt5 field
-  movsd                   real8 ptr [rsp + 0x68], xmm6    #      -- struct flt6 field
-  movsd                   real8 ptr [rsp + 0x70], xmm7    #      -- struct flt7 field
-  mov                     [rsp + 0x78], rdi               #      -- struct rdi field
-  mov                     [rsp + 0x80], rsi               #      -- struct rsi field
-  mov                     [rsp + 0x88], rdx               #      -- struct rdx field
-  mov                     [rsp + 0x90], rcx               #      -- struct rcx field
-  mov                     [rsp + 0x98], r8                #      -- struct r8 field
-  mov                     [rsp + 0xa0], r9                #      -- struct r9 field
-  mov                     r10, 0x1 # PROFILE_ENTER
-  mov                     [rsp + 0xa8], r10d              #      -- struct flags field
+  mov                     [rsp + PROFILE_PLATFORM_SPECIFIC_DATA__functionId], r11
+  save_reg_postrsp        rbp, PROFILE_PLATFORM_SPECIFIC_DATA__rbp
+  mov                     [rsp + PROFILE_PLATFORM_SPECIFIC_DATA__probeRsp], rax    # caller rsp
+  mov                     [rsp + PROFILE_PLATFORM_SPECIFIC_DATA__ip], r10    # return address
+  mov                     [rsp + PROFILE_PLATFORM_SPECIFIC_DATA__profiledRsp], r15
+  mov                     [rsp + PROFILE_PLATFORM_SPECIFIC_DATA__rax], r11    # return value
+  mov                     [rsp + PROFILE_PLATFORM_SPECIFIC_DATA__hiddenArg], r11    # r11 is null
+  movsd                   real8 ptr [rsp + PROFILE_PLATFORM_SPECIFIC_DATA__flt0], xmm0
+  movsd                   real8 ptr [rsp + PROFILE_PLATFORM_SPECIFIC_DATA__flt1], xmm1
+  movsd                   real8 ptr [rsp + PROFILE_PLATFORM_SPECIFIC_DATA__flt2], xmm2
+  movsd                   real8 ptr [rsp + PROFILE_PLATFORM_SPECIFIC_DATA__flt3], xmm3
+  movsd                   real8 ptr [rsp + PROFILE_PLATFORM_SPECIFIC_DATA__flt4], xmm4
+  movsd                   real8 ptr [rsp + PROFILE_PLATFORM_SPECIFIC_DATA__flt5], xmm5
+  movsd                   real8 ptr [rsp + PROFILE_PLATFORM_SPECIFIC_DATA__flt6], xmm6
+  movsd                   real8 ptr [rsp + PROFILE_PLATFORM_SPECIFIC_DATA__flt7], xmm7
+  mov                     [rsp + PROFILE_PLATFORM_SPECIFIC_DATA__rdi], rdi
+  mov                     [rsp + PROFILE_PLATFORM_SPECIFIC_DATA__rsi], rsi
+  mov                     [rsp + PROFILE_PLATFORM_SPECIFIC_DATA__rdx], rdx
+  mov                     [rsp + PROFILE_PLATFORM_SPECIFIC_DATA__rcx], rcx
+  mov                     [rsp + PROFILE_PLATFORM_SPECIFIC_DATA__r8], r8
+  mov                     [rsp + PROFILE_PLATFORM_SPECIFIC_DATA__r9], r9
+  mov                     r10, PROFILE_ENTER
+  mov                     [rsp + PROFILE_PLATFORM_SPECIFIC_DATA__flags], r10d
 
   END_PROLOGUE
 
@@ -134,22 +105,22 @@ NESTED_ENTRY ProfileEnterNaked, _TEXT, NoHandler
   call                    C_FUNC(ProfileEnter)
 
   # restore fp return registers
-  movsd                   xmm0, real8 ptr [rsp + 0x38]    #      -- struct flt0 field
-  movsd                   xmm1, real8 ptr [rsp + 0x40]    #      -- struct flt1 field
-  movsd                   xmm2, real8 ptr [rsp + 0x48]    #      -- struct flt2 field
-  movsd                   xmm3, real8 ptr [rsp + 0x50]    #      -- struct flt3 field
-  movsd                   xmm4, real8 ptr [rsp + 0x58]    #      -- struct flt4 field
-  movsd                   xmm5, real8 ptr [rsp + 0x60]    #      -- struct flt5 field
-  movsd                   xmm6, real8 ptr [rsp + 0x68]    #      -- struct flt6 field
-  movsd                   xmm7, real8 ptr [rsp + 0x70]    #      -- struct flt7 field
+  movsd                   xmm0, real8 ptr [rsp + PROFILE_PLATFORM_SPECIFIC_DATA__flt0]
+  movsd                   xmm1, real8 ptr [rsp + PROFILE_PLATFORM_SPECIFIC_DATA__flt1]
+  movsd                   xmm2, real8 ptr [rsp + PROFILE_PLATFORM_SPECIFIC_DATA__flt2]
+  movsd                   xmm3, real8 ptr [rsp + PROFILE_PLATFORM_SPECIFIC_DATA__flt3]
+  movsd                   xmm4, real8 ptr [rsp + PROFILE_PLATFORM_SPECIFIC_DATA__flt4]
+  movsd                   xmm5, real8 ptr [rsp + PROFILE_PLATFORM_SPECIFIC_DATA__flt5]
+  movsd                   xmm6, real8 ptr [rsp + PROFILE_PLATFORM_SPECIFIC_DATA__flt6]
+  movsd                   xmm7, real8 ptr [rsp + PROFILE_PLATFORM_SPECIFIC_DATA__flt7]
 
   # restore arg registers
-  mov                     rdi, [rsp + 0x78]
-  mov                     rsi, [rsp + 0x80]
-  mov                     rdx, [rsp + 0x88]
-  mov                     rcx, [rsp + 0x90]
-  mov                     r8, [rsp + 0x98]
-  mov                     r9, [rsp + 0xa0]
+  mov                     rdi, [rsp + PROFILE_PLATFORM_SPECIFIC_DATA__rdi]
+  mov                     rsi, [rsp + PROFILE_PLATFORM_SPECIFIC_DATA__rsi]
+  mov                     rdx, [rsp + PROFILE_PLATFORM_SPECIFIC_DATA__rdx]
+  mov                     rcx, [rsp + PROFILE_PLATFORM_SPECIFIC_DATA__rcx]
+  mov                     r8, [rsp + PROFILE_PLATFORM_SPECIFIC_DATA__r8]
+  mov                     r9, [rsp + PROFILE_PLATFORM_SPECIFIC_DATA__r9]
 
   # begin epilogue
   free_stack              SIZEOF_STACK_FRAME
@@ -182,29 +153,29 @@ NESTED_ENTRY ProfileLeaveNaked, _TEXT, NoHandler
 
   # setup ProfilePlatformSpecificData structure
   xor                     r11, r11  # nullify r11
-  mov                     [rsp +  0x0], r11    # r11 is null     -- struct functionId field
-  save_reg_postrsp        rbp, 0x8             #                 -- struct rbp field
-  mov                     [rsp + 0x10], rbx    # caller rsp      -- struct probeRsp field
-  mov                     [rsp + 0x18], r10    # return address  -- struct ip field
-  mov                     [rsp + 0x20], rsi    #                 -- struct profiledRsp field
-  mov                     [rsp + 0x28], rax    # return value    -- struct rax field
-  mov                     [rsp + 0x30], r11    # r11 is null     -- struct hiddenArg field
-  movsd                   real8 ptr [rsp + 0x38], xmm0    #      -- struct flt0 field
-  movsd                   real8 ptr [rsp + 0x40], xmm1    #      -- struct flt1 field
-  movsd                   real8 ptr [rsp + 0x48], xmm2    #      -- struct flt2 field
-  movsd                   real8 ptr [rsp + 0x50], xmm3    #      -- struct flt3 field
-  movsd                   real8 ptr [rsp + 0x58], xmm4    #      -- struct flt4 field
-  movsd                   real8 ptr [rsp + 0x60], xmm5    #      -- struct flt5 field
-  movsd                   real8 ptr [rsp + 0x68], xmm6    #      -- struct flt6 field
-  movsd                   real8 ptr [rsp + 0x70], xmm7    #      -- struct flt7 field
-  mov                     [rsp + 0x78], r11     #                -- struct rdi field
-  mov                     [rsp + 0x80], r11     #                -- struct rsi field
-  mov                     [rsp + 0x88], rdx     #                -- struct rdx field
-  mov                     [rsp + 0x90], r11     #                -- struct rcx field
-  mov                     [rsp + 0x98], r11     #                -- struct r8 field
-  mov                     [rsp + 0xa0], r11    #                -- struct r9 field
-  mov                     r10, 0x2  # PROFILE_LEAVE
-  mov                     [rsp + 0xa8], r10d   # flags           -- struct flags field
+  mov                     [rsp + PROFILE_PLATFORM_SPECIFIC_DATA__functionId], r11    # r11 is null
+  save_reg_postrsp        rbp, PROFILE_PLATFORM_SPECIFIC_DATA__rbp
+  mov                     [rsp + PROFILE_PLATFORM_SPECIFIC_DATA__probeRsp], rbx    # caller rsp
+  mov                     [rsp + PROFILE_PLATFORM_SPECIFIC_DATA__ip], r10    # return address
+  mov                     [rsp + PROFILE_PLATFORM_SPECIFIC_DATA__profiledRsp], rsi
+  mov                     [rsp + PROFILE_PLATFORM_SPECIFIC_DATA__rax], rax    # return value
+  mov                     [rsp + PROFILE_PLATFORM_SPECIFIC_DATA__hiddenArg], r11    # r11 is null
+  movsd                   real8 ptr [rsp + PROFILE_PLATFORM_SPECIFIC_DATA__flt0], xmm0
+  movsd                   real8 ptr [rsp + PROFILE_PLATFORM_SPECIFIC_DATA__flt1], xmm1
+  movsd                   real8 ptr [rsp + PROFILE_PLATFORM_SPECIFIC_DATA__flt2], xmm2
+  movsd                   real8 ptr [rsp + PROFILE_PLATFORM_SPECIFIC_DATA__flt3], xmm3
+  movsd                   real8 ptr [rsp + PROFILE_PLATFORM_SPECIFIC_DATA__flt4], xmm4
+  movsd                   real8 ptr [rsp + PROFILE_PLATFORM_SPECIFIC_DATA__flt5], xmm5
+  movsd                   real8 ptr [rsp + PROFILE_PLATFORM_SPECIFIC_DATA__flt6], xmm6
+  movsd                   real8 ptr [rsp + PROFILE_PLATFORM_SPECIFIC_DATA__flt7], xmm7
+  mov                     [rsp + PROFILE_PLATFORM_SPECIFIC_DATA__rdi], r11
+  mov                     [rsp + PROFILE_PLATFORM_SPECIFIC_DATA__rsi], r11
+  mov                     [rsp + PROFILE_PLATFORM_SPECIFIC_DATA__rdx], rdx
+  mov                     [rsp + PROFILE_PLATFORM_SPECIFIC_DATA__rcx], r11
+  mov                     [rsp + PROFILE_PLATFORM_SPECIFIC_DATA__r8], r11
+  mov                     [rsp + PROFILE_PLATFORM_SPECIFIC_DATA__r9], r11
+  mov                     r10, PROFILE_LEAVE
+  mov                     [rsp + PROFILE_PLATFORM_SPECIFIC_DATA__flags], r10d
 
   END_PROLOGUE
 
@@ -213,17 +184,17 @@ NESTED_ENTRY ProfileLeaveNaked, _TEXT, NoHandler
   call                    C_FUNC(ProfileLeave)
 
   # restore fp return registers
-  movsd                   xmm0, real8 ptr [rsp + 0x38]    #      -- struct flt0 field
-  movsd                   xmm1, real8 ptr [rsp + 0x40]    #      -- struct flt1 field
-  movsd                   xmm2, real8 ptr [rsp + 0x48]    #      -- struct flt2 field
-  movsd                   xmm3, real8 ptr [rsp + 0x50]    #      -- struct flt3 field
-  movsd                   xmm4, real8 ptr [rsp + 0x58]    #      -- struct flt4 field
-  movsd                   xmm5, real8 ptr [rsp + 0x60]    #      -- struct flt5 field
-  movsd                   xmm6, real8 ptr [rsp + 0x68]    #      -- struct flt6 field
-  movsd                   xmm7, real8 ptr [rsp + 0x70]    #      -- struct flt7 field
+  movsd                   xmm0, real8 ptr [rsp + PROFILE_PLATFORM_SPECIFIC_DATA__flt0]
+  movsd                   xmm1, real8 ptr [rsp + PROFILE_PLATFORM_SPECIFIC_DATA__flt1]
+  movsd                   xmm2, real8 ptr [rsp + PROFILE_PLATFORM_SPECIFIC_DATA__flt2]
+  movsd                   xmm3, real8 ptr [rsp + PROFILE_PLATFORM_SPECIFIC_DATA__flt3]
+  movsd                   xmm4, real8 ptr [rsp + PROFILE_PLATFORM_SPECIFIC_DATA__flt4]
+  movsd                   xmm5, real8 ptr [rsp + PROFILE_PLATFORM_SPECIFIC_DATA__flt5]
+  movsd                   xmm6, real8 ptr [rsp + PROFILE_PLATFORM_SPECIFIC_DATA__flt6]
+  movsd                   xmm7, real8 ptr [rsp + PROFILE_PLATFORM_SPECIFIC_DATA__flt7]
 
   # restore int return register
-  mov                     rax, [rsp + 0x28]
+  mov                     rax, [rsp + PROFILE_PLATFORM_SPECIFIC_DATA__rax]
 
   # begin epilogue
   free_stack              SIZEOF_STACK_FRAME
@@ -256,29 +227,29 @@ NESTED_ENTRY ProfileTailcallNaked, _TEXT, NoHandler
 
   # setup ProfilePlatformSpecificData structure
   xor                     r11, r11  # nullify r11
-  mov                     [rsp +  0x0], r11    # r11 is null     -- struct functionId field
-  save_reg_postrsp        rbp, 0x8             #                 -- struct rbp field
-  mov                     [rsp + 0x10], rbx    # caller rsp      -- struct probeRsp field
-  mov                     [rsp + 0x18], r10    # return address  -- struct ip field
-  mov                     [rsp + 0x20], rsi    #                 -- struct profiledRsp field
-  mov                     [rsp + 0x28], rax    # return value    -- struct rax field
-  mov                     [rsp + 0x30], r11    # r11 is null     -- struct hiddenArg field
-  movsd                   real8 ptr [rsp + 0x38], xmm0    #      -- struct flt0 field
-  movsd                   real8 ptr [rsp + 0x40], xmm1    #      -- struct flt1 field
-  movsd                   real8 ptr [rsp + 0x48], xmm2    #      -- struct flt2 field
-  movsd                   real8 ptr [rsp + 0x50], xmm3    #      -- struct flt3 field
-  movsd                   real8 ptr [rsp + 0x58], xmm4    #      -- struct flt4 field
-  movsd                   real8 ptr [rsp + 0x60], xmm5    #      -- struct flt5 field
-  movsd                   real8 ptr [rsp + 0x68], xmm6    #      -- struct flt6 field
-  movsd                   real8 ptr [rsp + 0x70], xmm7    #      -- struct flt7 field
-  mov                     [rsp + 0x78], r11     #                -- struct rdi field
-  mov                     [rsp + 0x80], r11     #                -- struct rsi field
-  mov                     [rsp + 0x88], rdx     #                -- struct rdx field
-  mov                     [rsp + 0x90], r11     #                -- struct rcx field
-  mov                     [rsp + 0x98], r11     #                -- struct r8 field
-  mov                     [rsp + 0xa0], r11     #                -- struct r9 field
-  mov                     r10, 0x2  # PROFILE_LEAVE
-  mov                     [rsp + 0xa8], r10d   # flags           -- struct flags field
+  mov                     [rsp +  PROFILE_PLATFORM_SPECIFIC_DATA__functionId], r11  # r11 is null
+  save_reg_postrsp        rbp, PROFILE_PLATFORM_SPECIFIC_DATA__rbp
+  mov                     [rsp + PROFILE_PLATFORM_SPECIFIC_DATA__probeRsp], rbx  # caller rsp
+  mov                     [rsp + PROFILE_PLATFORM_SPECIFIC_DATA__ip], r10  # return address
+  mov                     [rsp + PROFILE_PLATFORM_SPECIFIC_DATA__profiledRsp], rsi
+  mov                     [rsp + PROFILE_PLATFORM_SPECIFIC_DATA__rax], rax  # return value
+  mov                     [rsp + PROFILE_PLATFORM_SPECIFIC_DATA__hiddenArg], r11  # r11 is null
+  movsd                   real8 ptr [rsp + PROFILE_PLATFORM_SPECIFIC_DATA__flt0], xmm0
+  movsd                   real8 ptr [rsp + PROFILE_PLATFORM_SPECIFIC_DATA__flt1], xmm1
+  movsd                   real8 ptr [rsp + PROFILE_PLATFORM_SPECIFIC_DATA__flt2], xmm2
+  movsd                   real8 ptr [rsp + PROFILE_PLATFORM_SPECIFIC_DATA__flt3], xmm3
+  movsd                   real8 ptr [rsp + PROFILE_PLATFORM_SPECIFIC_DATA__flt4], xmm4
+  movsd                   real8 ptr [rsp + PROFILE_PLATFORM_SPECIFIC_DATA__flt5], xmm5
+  movsd                   real8 ptr [rsp + PROFILE_PLATFORM_SPECIFIC_DATA__flt6], xmm6
+  movsd                   real8 ptr [rsp + PROFILE_PLATFORM_SPECIFIC_DATA__flt7], xmm7
+  mov                     [rsp + PROFILE_PLATFORM_SPECIFIC_DATA__rdi], r11
+  mov                     [rsp + PROFILE_PLATFORM_SPECIFIC_DATA__rsi], r11
+  mov                     [rsp + PROFILE_PLATFORM_SPECIFIC_DATA__rdx], rdx
+  mov                     [rsp + PROFILE_PLATFORM_SPECIFIC_DATA__rcx], r11
+  mov                     [rsp + PROFILE_PLATFORM_SPECIFIC_DATA__r8], r11
+  mov                     [rsp + PROFILE_PLATFORM_SPECIFIC_DATA__r9], r11
+  mov                     r10, PROFILE_LEAVE
+  mov                     [rsp + PROFILE_PLATFORM_SPECIFIC_DATA__flags], r10d
 
   END_PROLOGUE
 
@@ -287,17 +258,17 @@ NESTED_ENTRY ProfileTailcallNaked, _TEXT, NoHandler
   call                    C_FUNC(ProfileTailcall)
 
   # restore fp return registers
-  movsd                   xmm0, real8 ptr [rsp + 0x38]    #      -- struct flt0 field
-  movsd                   xmm1, real8 ptr [rsp + 0x40]    #      -- struct flt1 field
-  movsd                   xmm2, real8 ptr [rsp + 0x48]    #      -- struct flt2 field
-  movsd                   xmm3, real8 ptr [rsp + 0x50]    #      -- struct flt3 field
-  movsd                   xmm4, real8 ptr [rsp + 0x58]    #      -- struct flt4 field
-  movsd                   xmm5, real8 ptr [rsp + 0x60]    #      -- struct flt5 field
-  movsd                   xmm6, real8 ptr [rsp + 0x68]    #      -- struct flt6 field
-  movsd                   xmm7, real8 ptr [rsp + 0x70]    #      -- struct flt7 field
+  movsd                   xmm0, real8 ptr [rsp + PROFILE_PLATFORM_SPECIFIC_DATA__flt0]
+  movsd                   xmm1, real8 ptr [rsp + PROFILE_PLATFORM_SPECIFIC_DATA__flt1]
+  movsd                   xmm2, real8 ptr [rsp + PROFILE_PLATFORM_SPECIFIC_DATA__flt2]
+  movsd                   xmm3, real8 ptr [rsp + PROFILE_PLATFORM_SPECIFIC_DATA__flt3]
+  movsd                   xmm4, real8 ptr [rsp + PROFILE_PLATFORM_SPECIFIC_DATA__flt4]
+  movsd                   xmm5, real8 ptr [rsp + PROFILE_PLATFORM_SPECIFIC_DATA__flt5]
+  movsd                   xmm6, real8 ptr [rsp + PROFILE_PLATFORM_SPECIFIC_DATA__flt6]
+  movsd                   xmm7, real8 ptr [rsp + PROFILE_PLATFORM_SPECIFIC_DATA__flt7]
 
   # restore int return register
-  mov                     rax, [rsp + 0x28]
+  mov                     rax, [rsp + PROFILE_PLATFORM_SPECIFIC_DATA__rax]
 
   # begin epilogue
   free_stack              SIZEOF_STACK_FRAME
@@ -308,7 +279,7 @@ NESTED_ENTRY ProfileTailcallNaked, _TEXT, NoHandler
   ret
 NESTED_END ProfileTailcallNaked, _TEXT
 
-#ifdef TARGET_OSX
+#ifdef TARGET_APPLE
 # EXTERN_C void* GetThreadVarsAddress()
 # <NOTE>
 # Helper to calculate the address of relevant __thread_vars section that holds the address of symbol tlv_get_address for thread
@@ -320,10 +291,12 @@ LEAF_ENTRY GetThreadVarsAddress, _TEXT
         ret
 LEAF_END GetThreadVarsAddress, _TEXT
 // ------------------------------------------------------------------
-#endif // TARGET_OSX
+#endif // TARGET_APPLE
 
-#ifndef TARGET_OSX
+#ifndef TARGET_APPLE
 # EXTERN_C void* GetTlsIndexObjectDescOffset();
+
+#ifndef TARGET_ANDROID
 
 # <NOTE>
 # Helper to calculate the offset of native thread local variable `t_ThreadStatics`. The offset has to be found at runtime
@@ -347,4 +320,832 @@ LEAF_ENTRY GetTlsIndexObjectDescOffset, _TEXT
         call    EXTERNAL_C_FUNC(__tls_get_addr)                      # dummy call to have linker see the code pattern to replace the offset
         int 3
 LEAF_END GetTlsIndexObjectDescOffset, _TEXT
-#endif
+#endif // !TARGET_ANDROID
+#endif // !TARGET_OSX
+
+LEAF_ENTRY  JIT_PollGC, _TEXT
+        PREPARE_EXTERNAL_VAR g_TrapReturningThreads, rax
+        cmp     dword ptr [rax], 0
+        jnz     LOCAL_LABEL(JIT_PollGCRarePath)
+        ret
+LOCAL_LABEL(JIT_PollGCRarePath):
+        PREPARE_EXTERNAL_VAR g_pPollGC, rax
+        mov     rax, [rax]
+        jmp     rax
+LEAF_END  JIT_PollGC, _TEXT
+
+//rdi -This pointer
+//rsi -ReturnBuffer
+LEAF_ENTRY ThisPtrRetBufPrecodeWorker, _TEXT
+    mov  METHODDESC_REGISTER, [METHODDESC_REGISTER + ThisPtrRetBufPrecodeData__Target]
+    mov r11, rsi
+    mov rsi, rdi
+    mov rdi, r11
+    jmp METHODDESC_REGISTER
+LEAF_END ThisPtrRetBufPrecodeWorker, _TEXT
+
+//
+// Prologue of all funclet calling helpers (CallXXXXFunclet)
+//
+.macro FUNCLET_CALL_PROLOGUE localsCount, alignStack
+        push_nonvol_reg r15     // save preserved regs for OS stackwalker
+        push_nonvol_reg r14     // ...
+        push_nonvol_reg r13     // ...
+        push_nonvol_reg r12     // ...
+        push_nonvol_reg rbx     // ...
+        push_nonvol_reg rbp     // ...
+
+        stack_alloc_size = \localsCount * 8 + \alignStack * 8
+
+        alloc_stack     stack_alloc_size
+
+        END_PROLOGUE
+.endm
+
+//
+// Epilogue of all funclet calling helpers (CallXXXXFunclet)
+//
+.macro FUNCLET_CALL_EPILOGUE
+        free_stack      stack_alloc_size
+
+        pop_nonvol_reg rbp
+        pop_nonvol_reg rbx
+        pop_nonvol_reg r12
+        pop_nonvol_reg r13
+        pop_nonvol_reg r14
+        pop_nonvol_reg r15
+.endm
+
+// This helper enables us to call into a funclet after restoring Fp register
+NESTED_ENTRY CallEHFunclet, _TEXT, NoHandler
+        // On entry:
+        //
+        // RDI = throwable
+        // RSI = PC to invoke
+        // RDX = address of RBX register in CONTEXT record; used to restore the non-volatile registers of CrawlFrame
+        // RCX = address of the location where the SP of funclet's caller (i.e. this helper) should be saved.
+        //
+
+        FUNCLET_CALL_PROLOGUE 0, 1
+
+        //  Restore RBX, RBP, R12, R13, R14, R15 from CONTEXT
+        mov     rbp, [rdx + OFFSETOF__CONTEXT__Rbp - OFFSETOF__CONTEXT__Rbx]
+        mov     r12, [rdx + OFFSETOF__CONTEXT__R12 - OFFSETOF__CONTEXT__Rbx]
+        mov     r13, [rdx + OFFSETOF__CONTEXT__R13 - OFFSETOF__CONTEXT__Rbx]
+        mov     r14, [rdx + OFFSETOF__CONTEXT__R14 - OFFSETOF__CONTEXT__Rbx]
+        mov     r15, [rdx + OFFSETOF__CONTEXT__R15 - OFFSETOF__CONTEXT__Rbx]
+
+        // Save the SP of this function.
+        mov     [rcx], rsp
+        // Invoke the funclet
+        call    rsi
+
+        FUNCLET_CALL_EPILOGUE
+        ret
+NESTED_END CallEHFunclet, _TEXT
+
+// This helper enables us to call into a filter funclet by passing it the CallerSP to lookup the
+// frame pointer for accessing the locals in the parent method.
+NESTED_ENTRY CallEHFilterFunclet, _TEXT, NoHandler
+        // On entry:
+        //
+        // RDI = throwable
+        // RSI = RBP of main function
+        // RDX = PC to invoke
+        // RCX = address of the location where the SP of funclet's caller (i.e. this helper) should be saved.
+        //
+
+        FUNCLET_CALL_PROLOGUE 0, 1
+
+        // Restore RBP
+        mov     rbp, rsi
+        // Save the SP of this function
+        mov     [rcx], rsp
+        // Invoke the filter funclet
+        call    rdx
+
+        FUNCLET_CALL_EPILOGUE
+        ret
+NESTED_END CallEHFilterFunclet, _TEXT
+
+#ifdef FEATURE_INTERPRETER
+
+NESTED_ENTRY InterpreterStub, _TEXT, NoHandler
+
+        PROLOG_WITH_TRANSITION_BLOCK 8, 0, 0, 0, 0
+        mov             [rsp], rax // Return buffer in Swift calling convention
+
+        #
+        # call ExecuteInterpretedMethod
+        #
+        lea             rdi, [rsp + __PWTB_TransitionBlock]     // pTransitionBlock*
+        mov             rsi, METHODDESC_REGISTER
+        call            C_FUNC(ExecuteInterpretedMethod)
+
+        mov             rax, [rsp]
+        EPILOG_WITH_TRANSITION_BLOCK_RETURN
+
+NESTED_END InterpreterStub, _TEXT
+
+// Copy arguments from the interpreter stack to the processor stack.
+// The CPU stack slots are aligned to pointer size.
+LEAF_ENTRY Load_Stack, _TEXT
+        push rdi
+        push rsi
+        push rcx
+        mov edi, dword ptr [r11 + 8]  // SP offset
+        mov ecx, dword ptr [r11 + 12] // number of stack slots
+        add edi, 0x20 // the 3 pushes above plus return address
+        add rdi, rsp
+        mov rsi, r10
+        shr rcx, 3
+        rep movsq
+        mov r10, rsi
+        pop rcx
+        pop rsi
+        pop rdi
+        add r11, 16
+        jmp qword ptr [r11]
+LEAF_END Load_Stack, _TEXT
+
+// Routines for passing arguments by value in general purpose registers RDI, RSI, RDX, RCX, R8, R9
+
+LEAF_ENTRY Load_RDI, _TEXT
+        mov rdi, [r10]
+        add r10, 8
+        add r11, 8
+        jmp qword ptr [r11]
+LEAF_END Load_RDI, _TEXT
+
+LEAF_ENTRY Load_RDI_RSI, _TEXT
+        mov rdi, [r10]
+        mov rsi, [r10 + 8]
+        add r10, 16
+        add r11, 8
+        jmp qword ptr [r11]
+LEAF_END Load_RDI_RSI, _TEXT
+
+LEAF_ENTRY Load_RDI_RSI_RDX, _TEXT
+        mov rdi, [r10]
+        mov rsi, [r10 + 8]
+        mov rdx, [r10 + 16]
+        add r10, 24
+        add r11, 8
+        jmp qword ptr [r11]
+LEAF_END Load_RDI_RSI_RDX, _TEXT
+
+LEAF_ENTRY Load_RDI_RSI_RDX_RCX, _TEXT
+        mov rdi, [r10]
+        mov rsi, [r10 + 8]
+        mov rdx, [r10 + 16]
+        mov rcx, [r10 + 24]
+        add r10, 32
+        add r11, 8
+        jmp qword ptr [r11]
+LEAF_END Load_RDI_RSI_RDX_RCX, _TEXT
+
+LEAF_ENTRY Load_RDI_RSI_RDX_RCX_R8, _TEXT
+        mov rdi, [r10]
+        mov rsi, [r10 + 8]
+        mov rdx, [r10 + 16]
+        mov rcx, [r10 + 24]
+        mov r8, [r10 + 32]
+        add r10, 40
+        add r11, 8
+        jmp qword ptr [r11]
+LEAF_END Load_RDI_RSI_RDX_RCX_R8, _TEXT
+
+LEAF_ENTRY Load_RDI_RSI_RDX_RCX_R8_R9, _TEXT
+        mov rdi, [r10]
+        mov rsi, [r10 + 8]
+        mov rdx, [r10 + 16]
+        mov rcx, [r10 + 24]
+        mov r8, [r10 + 32]
+        mov r9, [r10 + 40]
+        add r10, 48
+        add r11, 8
+        jmp qword ptr [r11]
+LEAF_END Load_RDI_RSI_RDX_RCX_R8_R9, _TEXT
+
+LEAF_ENTRY Load_RSI, _TEXT
+        mov rsi, [r10]
+        add r10, 8
+        add r11, 8
+        jmp qword ptr [r11]
+LEAF_END Load_RSI, _TEXT
+
+LEAF_ENTRY Load_RSI_RDX, _TEXT
+        mov rsi, [r10]
+        mov rdx, [r10 + 8]
+        add r10, 16
+        add r11, 8
+        jmp qword ptr [r11]
+LEAF_END Load_RSI_RDX, _TEXT
+
+LEAF_ENTRY Load_RSI_RDX_RCX, _TEXT
+        mov rsi, [r10]
+        mov rdx, [r10 + 8]
+        mov rcx, [r10 + 16]
+        add r10, 24
+        add r11, 8
+        jmp qword ptr [r11]
+LEAF_END Load_RSI_RDX_RCX, _TEXT
+
+LEAF_ENTRY Load_RSI_RDX_RCX_R8, _TEXT
+        mov rsi, [r10]
+        mov rdx, [r10 + 8]
+        mov rcx, [r10 + 16]
+        mov r8, [r10 + 24]
+        add r10, 32
+        add r11, 8
+        jmp qword ptr [r11]
+LEAF_END Load_RSI_RDX_RCX_R8, _TEXT
+
+LEAF_ENTRY Load_RSI_RDX_RCX_R8_R9, _TEXT
+        mov rsi, [r10]
+        mov rdx, [r10 + 8]
+        mov rcx, [r10 + 16]
+        mov r8, [r10 + 24]
+        mov r9, [r10 + 32]
+        add r10, 40
+        add r11, 8
+        jmp qword ptr [r11]
+LEAF_END Load_RSI_RDX_RCX_R8_R9, _TEXT
+
+LEAF_ENTRY Load_RDX, _TEXT
+        mov rdx, [r10]
+        add r10, 8
+        add r11, 8
+        jmp qword ptr [r11]
+LEAF_END Load_RDX, _TEXT
+
+LEAF_ENTRY Load_RDX_RCX, _TEXT
+        mov rdx, [r10]
+        mov rcx, [r10 + 8]
+        add r10, 16
+        add r11, 8
+        jmp qword ptr [r11]
+LEAF_END Load_RDX_RCX, _TEXT
+
+LEAF_ENTRY Load_RDX_RCX_R8, _TEXT
+        mov rdx, [r10]
+        mov rcx, [r10 + 8]
+        mov r8, [r10 + 16]
+        add r10, 24
+        add r11, 8
+        jmp qword ptr [r11]
+LEAF_END Load_RDX_RCX_R8, _TEXT
+
+LEAF_ENTRY Load_RDX_RCX_R8_R9, _TEXT
+        mov rdx, [r10]
+        mov rcx, [r10 + 8]
+        mov r8, [r10 + 16]
+        mov r9, [r10 + 24]
+        add r10, 32
+        add r11, 8
+        jmp qword ptr [r11]
+LEAF_END Load_RDX_RCX_R8_R9, _TEXT
+
+LEAF_ENTRY Load_RCX, _TEXT
+        mov rcx, [r10]
+        add r10, 8
+        add r11, 8
+        jmp qword ptr [r11]
+LEAF_END Load_RCX, _TEXT
+
+LEAF_ENTRY Load_RCX_R8, _TEXT
+        mov rcx, [r10]
+        mov r8, [r10 + 8]
+        add r10, 16
+        add r11, 8
+        jmp qword ptr [r11]
+LEAF_END Load_RCX_R8, _TEXT
+
+LEAF_ENTRY Load_RCX_R8_R9, _TEXT
+        mov rcx, [r10]
+        mov r8, [r10 + 8]
+        mov r9, [r10 + 16]
+        add r10, 24
+        add r11, 8
+        jmp qword ptr [r11]
+LEAF_END Load_RCX_R8_R9, _TEXT
+
+LEAF_ENTRY Load_RDX_R8, _TEXT
+        mov rdx, [r10]
+        mov r8, [r10 + 8]
+        add r10, 16
+        add r11, 8
+        jmp qword ptr [r11]
+LEAF_END Load_RDX_R8, _TEXT
+
+LEAF_ENTRY Load_RDX_R8_R9, _TEXT
+        mov rdx, [r10]
+        mov r8, [r10 + 8]
+        mov r9, [r10 + 16]
+        add r10, 24
+        add r11, 8
+        jmp qword ptr [r11]
+LEAF_END Load_RDX_R8_R9, _TEXT
+
+LEAF_ENTRY Load_R8, _TEXT
+        mov r8, [r10]
+        add r10, 8
+        add r11, 8
+        jmp qword ptr [r11]
+LEAF_END Load_R8, _TEXT
+
+LEAF_ENTRY Load_R8_R9, _TEXT
+        mov r8, [r10]
+        mov r9, [r10 + 8]
+        add r10, 16
+        add r11, 8
+        jmp qword ptr [r11]
+LEAF_END Load_R8_R9, _TEXT
+
+LEAF_ENTRY Load_R9, _TEXT
+        mov r9, [r10]
+        add r10, 8
+        add r11, 8
+        jmp qword ptr [r11]
+LEAF_END Load_R9, _TEXT
+
+// Routines for passing arguments in floating point registers XMM0..XMM7
+
+LEAF_ENTRY Load_XMM0, _TEXT
+        movsd xmm0, real8 ptr [r10]
+        add r10, 8
+        add r11, 8
+        jmp qword ptr [r11]
+LEAF_END Load_XMM0, _TEXT
+
+LEAF_ENTRY Load_XMM0_XMM1, _TEXT
+        movsd xmm0, real8 ptr [r10]
+        movsd xmm1, real8 ptr [r10 + 8]
+        add r10, 16
+        add r11, 8
+        jmp qword ptr [r11]
+LEAF_END Load_XMM0_XMM1, _TEXT
+
+LEAF_ENTRY Load_XMM0_XMM1_XMM2, _TEXT
+        movsd xmm0, real8 ptr [r10]
+        movsd xmm1, real8 ptr [r10 + 8]
+        movsd xmm2, real8 ptr [r10 + 16]
+        add r10, 24
+        add r11, 8
+        jmp qword ptr [r11]
+LEAF_END Load_XMM0_XMM1_XMM2, _TEXT
+
+LEAF_ENTRY Load_XMM0_XMM1_XMM2_XMM3, _TEXT
+        movsd xmm0, real8 ptr [r10]
+        movsd xmm1, real8 ptr [r10 + 8]
+        movsd xmm2, real8 ptr [r10 + 16]
+        movsd xmm3, real8 ptr [r10 + 24]
+        add r10, 32
+        add r11, 8
+        jmp qword ptr [r11]
+LEAF_END Load_XMM0_XMM1_XMM2_XMM3, _TEXT
+
+LEAF_ENTRY Load_XMM0_XMM1_XMM2_XMM3_XMM4, _TEXT
+        movsd xmm0, real8 ptr [r10]
+        movsd xmm1, real8 ptr [r10 + 8]
+        movsd xmm2, real8 ptr [r10 + 16]
+        movsd xmm3, real8 ptr [r10 + 24]
+        movsd xmm4, real8 ptr [r10 + 32]
+        add r10, 40
+        add r11, 8
+        jmp qword ptr [r11]
+LEAF_END Load_XMM0_XMM1_XMM2_XMM3_XMM4, _TEXT
+
+LEAF_ENTRY Load_XMM0_XMM1_XMM2_XMM3_XMM4_XMM5, _TEXT
+        movsd xmm0, real8 ptr [r10]
+        movsd xmm1, real8 ptr [r10 + 8]
+        movsd xmm2, real8 ptr [r10 + 16]
+        movsd xmm3, real8 ptr [r10 + 24]
+        movsd xmm4, real8 ptr [r10 + 32]
+        movsd xmm5, real8 ptr [r10 + 40]
+        add r10, 48
+        add r11, 8
+        jmp qword ptr [r11]
+LEAF_END Load_XMM0_XMM1_XMM2_XMM3_XMM4_XMM5, _TEXT
+
+LEAF_ENTRY Load_XMM0_XMM1_XMM2_XMM3_XMM4_XMM5_XMM6, _TEXT
+        movsd xmm0, real8 ptr [r10]
+        movsd xmm1, real8 ptr [r10 + 8]
+        movsd xmm2, real8 ptr [r10 + 16]
+        movsd xmm3, real8 ptr [r10 + 24]
+        movsd xmm4, real8 ptr [r10 + 32]
+        movsd xmm5, real8 ptr [r10 + 40]
+        movsd xmm6, real8 ptr [r10 + 48]
+        add r10, 56
+        add r11, 8
+        jmp qword ptr [r11]
+LEAF_END Load_XMM0_XMM1_XMM2_XMM3_XMM4_XMM5_XMM6, _TEXT
+
+LEAF_ENTRY Load_XMM0_XMM1_XMM2_XMM3_XMM4_XMM5_XMM6_XMM7, _TEXT
+        movsd xmm0, real8 ptr [r10]
+        movsd xmm1, real8 ptr [r10 + 8]
+        movsd xmm2, real8 ptr [r10 + 16]
+        movsd xmm3, real8 ptr [r10 + 24]
+        movsd xmm4, real8 ptr [r10 + 32]
+        movsd xmm5, real8 ptr [r10 + 40]
+        movsd xmm6, real8 ptr [r10 + 48]
+        movsd xmm7, real8 ptr [r10 + 56]
+        add r10, 64
+        add r11, 8
+        jmp qword ptr [r11]
+LEAF_END Load_XMM0_XMM1_XMM2_XMM3_XMM4_XMM5_XMM6_XMM7, _TEXT
+
+LEAF_ENTRY Load_XMM1, _TEXT
+        movsd xmm1, real8 ptr [r10]
+        add r10, 8
+        add r11, 8
+        jmp qword ptr [r11]
+LEAF_END Load_XMM1, _TEXT
+
+LEAF_ENTRY Load_XMM1_XMM2, _TEXT
+        movsd xmm1, real8 ptr [r10]
+        movsd xmm2, real8 ptr [r10 + 8]
+        add r10, 16
+        add r11, 8
+        jmp qword ptr [r11]
+LEAF_END Load_XMM1_XMM2, _TEXT
+
+LEAF_ENTRY Load_XMM1_XMM2_XMM3, _TEXT
+        movsd xmm1, real8 ptr [r10]
+        movsd xmm2, real8 ptr [r10 + 8]
+        movsd xmm3, real8 ptr [r10 + 16]
+        add r10, 24
+        add r11, 8
+        jmp qword ptr [r11]
+LEAF_END Load_XMM1_XMM2_XMM3, _TEXT
+
+LEAF_ENTRY Load_XMM1_XMM2_XMM3_XMM4, _TEXT
+        movsd xmm1, real8 ptr [r10]
+        movsd xmm2, real8 ptr [r10 + 8]
+        movsd xmm3, real8 ptr [r10 + 16]
+        movsd xmm4, real8 ptr [r10 + 24]
+        add r10, 32
+        add r11, 8
+        jmp qword ptr [r11]
+LEAF_END Load_XMM1_XMM2_XMM3_XMM4, _TEXT
+
+LEAF_ENTRY Load_XMM1_XMM2_XMM3_XMM4_XMM5, _TEXT
+        movsd xmm1, real8 ptr [r10]
+        movsd xmm2, real8 ptr [r10 + 8]
+        movsd xmm3, real8 ptr [r10 + 16]
+        movsd xmm4, real8 ptr [r10 + 24]
+        movsd xmm5, real8 ptr [r10 + 32]
+        add r10, 40
+        add r11, 8
+        jmp qword ptr [r11]
+LEAF_END Load_XMM1_XMM2_XMM3_XMM4_XMM5, _TEXT
+
+LEAF_ENTRY Load_XMM1_XMM2_XMM3_XMM4_XMM5_XMM6, _TEXT
+        movsd xmm1, real8 ptr [r10]
+        movsd xmm2, real8 ptr [r10 + 8]
+        movsd xmm3, real8 ptr [r10 + 16]
+        movsd xmm4, real8 ptr [r10 + 24]
+        movsd xmm5, real8 ptr [r10 + 32]
+        movsd xmm6, real8 ptr [r10 + 40]
+        add r10, 48
+        add r11, 8
+        jmp qword ptr [r11]
+LEAF_END Load_XMM1_XMM2_XMM3_XMM4_XMM5_XMM6, _TEXT
+
+LEAF_ENTRY Load_XMM1_XMM2_XMM3_XMM4_XMM5_XMM6_XMM7, _TEXT
+        movsd xmm1, real8 ptr [r10]
+        movsd xmm2, real8 ptr [r10 + 8]
+        movsd xmm3, real8 ptr [r10 + 16]
+        movsd xmm4, real8 ptr [r10 + 24]
+        movsd xmm5, real8 ptr [r10 + 32]
+        movsd xmm6, real8 ptr [r10 + 40]
+        movsd xmm7, real8 ptr [r10 + 48]
+        add r10, 56
+        add r11, 8
+        jmp qword ptr [r11]
+LEAF_END Load_XMM1_XMM2_XMM3_XMM4_XMM5_XMM6_XMM7, _TEXT
+
+LEAF_ENTRY Load_XMM2, _TEXT
+        movsd xmm2, real8 ptr [r10]
+        add r10, 8
+        add r11, 8
+        jmp qword ptr [r11]
+LEAF_END Load_XMM2, _TEXT
+
+LEAF_ENTRY Load_XMM2_XMM3, _TEXT
+        movsd xmm2, real8 ptr [r10]
+        movsd xmm3, real8 ptr [r10 + 8]
+        add r10, 16
+        add r11, 8
+        jmp qword ptr [r11]
+LEAF_END Load_XMM2_XMM3, _TEXT
+
+LEAF_ENTRY Load_XMM2_XMM3_XMM4, _TEXT
+        movsd xmm2, real8 ptr [r10]
+        movsd xmm3, real8 ptr [r10 + 8]
+        movsd xmm4, real8 ptr [r10 + 16]
+        add r10, 24
+        add r11, 8
+        jmp qword ptr [r11]
+LEAF_END Load_XMM2_XMM3_XMM4, _TEXT
+
+LEAF_ENTRY Load_XMM2_XMM3_XMM4_XMM5, _TEXT
+        movsd xmm2, real8 ptr [r10]
+        movsd xmm3, real8 ptr [r10 + 8]
+        movsd xmm4, real8 ptr [r10 + 16]
+        movsd xmm5, real8 ptr [r10 + 24]
+        add r10, 32
+        add r11, 8
+        jmp qword ptr [r11]
+LEAF_END Load_XMM2_XMM3_XMM4_XMM5, _TEXT
+
+LEAF_ENTRY Load_XMM2_XMM3_XMM4_XMM5_XMM6, _TEXT
+        movsd xmm2, real8 ptr [r10]
+        movsd xmm3, real8 ptr [r10 + 8]
+        movsd xmm4, real8 ptr [r10 + 16]
+        movsd xmm5, real8 ptr [r10 + 24]
+        movsd xmm6, real8 ptr [r10 + 32]
+        add r10, 40
+        add r11, 8
+        jmp qword ptr [r11]
+LEAF_END Load_XMM2_XMM3_XMM4_XMM5_XMM6, _TEXT
+
+LEAF_ENTRY Load_XMM2_XMM3_XMM4_XMM5_XMM6_XMM7, _TEXT
+        movsd xmm2, real8 ptr [r10]
+        movsd xmm3, real8 ptr [r10 + 8]
+        movsd xmm4, real8 ptr [r10 + 16]
+        movsd xmm5, real8 ptr [r10 + 24]
+        movsd xmm6, real8 ptr [r10 + 32]
+        movsd xmm7, real8 ptr [r10 + 40]
+        add r10, 48
+        add r11, 8
+        jmp qword ptr [r11]
+LEAF_END Load_XMM2_XMM3_XMM4_XMM5_XMM6_XMM7, _TEXT
+
+LEAF_ENTRY Load_XMM3, _TEXT
+        movsd xmm3, real8 ptr [r10]
+        add r10, 8
+        add r11, 8
+        jmp qword ptr [r11]
+LEAF_END Load_XMM3, _TEXT
+
+LEAF_ENTRY Load_XMM3_XMM4, _TEXT
+        movsd xmm3, real8 ptr [r10]
+        movsd xmm4, real8 ptr [r10 + 8]
+        add r10, 16
+        add r11, 8
+        jmp qword ptr [r11]
+LEAF_END Load_XMM3_XMM4, _TEXT
+
+LEAF_ENTRY Load_XMM3_XMM4_XMM5, _TEXT
+        movsd xmm3, real8 ptr [r10]
+        movsd xmm4, real8 ptr [r10 + 8]
+        movsd xmm5, real8 ptr [r10 + 16]
+        add r10, 24
+        add r11, 8
+        jmp qword ptr [r11]
+LEAF_END Load_XMM3_XMM4_XMM5, _TEXT
+
+LEAF_ENTRY Load_XMM3_XMM4_XMM5_XMM6, _TEXT
+        movsd xmm3, real8 ptr [r10]
+        movsd xmm4, real8 ptr [r10 + 8]
+        movsd xmm5, real8 ptr [r10 + 16]
+        movsd xmm6, real8 ptr [r10 + 24]
+        add r10, 32
+        add r11, 8
+        jmp qword ptr [r11]
+LEAF_END Load_XMM3_XMM4_XMM5_XMM6, _TEXT
+
+LEAF_ENTRY Load_XMM3_XMM4_XMM5_XMM6_XMM7, _TEXT
+        movsd xmm3, real8 ptr [r10]
+        movsd xmm4, real8 ptr [r10 + 8]
+        movsd xmm5, real8 ptr [r10 + 16]
+        movsd xmm6, real8 ptr [r10 + 24]
+        movsd xmm7, real8 ptr [r10 + 32]
+        add r10, 40
+        add r11, 8
+        jmp qword ptr [r11]
+LEAF_END Load_XMM3_XMM4_XMM5_XMM6_XMM7, _TEXT
+
+LEAF_ENTRY Load_XMM4, _TEXT
+        movsd xmm4, real8 ptr [r10]
+        add r10, 8
+        add r11, 8
+        jmp qword ptr [r11]
+LEAF_END Load_XMM4, _TEXT
+
+LEAF_ENTRY Load_XMM4_XMM5, _TEXT
+        movsd xmm4, real8 ptr [r10]
+        movsd xmm5, real8 ptr [r10 + 8]
+        add r10, 16
+        add r11, 8
+        jmp qword ptr [r11]
+LEAF_END Load_XMM4_XMM5, _TEXT
+
+LEAF_ENTRY Load_XMM4_XMM5_XMM6, _TEXT
+        movsd xmm4, real8 ptr [r10]
+        movsd xmm5, real8 ptr [r10 + 8]
+        movsd xmm6, real8 ptr [r10 + 16]
+        add r10, 24
+        add r11, 8
+        jmp qword ptr [r11]
+LEAF_END Load_XMM4_XMM5_XMM6, _TEXT
+
+LEAF_ENTRY Load_XMM4_XMM5_XMM6_XMM7, _TEXT
+        movsd xmm4, real8 ptr [r10]
+        movsd xmm5, real8 ptr [r10 + 8]
+        movsd xmm6, real8 ptr [r10 + 16]
+        movsd xmm7, real8 ptr [r10 + 24]
+        add r10, 32
+        add r11, 8
+        jmp qword ptr [r11]
+LEAF_END Load_XMM4_XMM5_XMM6_XMM7, _TEXT
+
+LEAF_ENTRY Load_XMM5, _TEXT
+        movsd xmm5, real8 ptr [r10]
+        add r10, 8
+        add r11, 8
+        jmp qword ptr [r11]
+LEAF_END Load_XMM5, _TEXT
+
+LEAF_ENTRY Load_XMM5_XMM6, _TEXT
+        movsd xmm5, real8 ptr [r10]
+        movsd xmm6, real8 ptr [r10 + 8]
+        add r10, 16
+        add r11, 8
+        jmp qword ptr [r11]
+LEAF_END Load_XMM5_XMM6, _TEXT
+
+LEAF_ENTRY Load_XMM5_XMM6_XMM7, _TEXT
+        movsd xmm5, real8 ptr [r10]
+        movsd xmm6, real8 ptr [r10 + 8]
+        movsd xmm7, real8 ptr [r10 + 16]
+        add r10, 24
+        add r11, 8
+        jmp qword ptr [r11]
+LEAF_END Load_XMM5_XMM6_XMM7, _TEXT
+
+LEAF_ENTRY Load_XMM6, _TEXT
+        movsd xmm6, real8 ptr [r10]
+        add r10, 8
+        add r11, 8
+        jmp qword ptr [r11]
+LEAF_END Load_XMM6, _TEXT
+
+LEAF_ENTRY Load_XMM6_XMM7, _TEXT
+        movsd xmm6, real8 ptr [r10]
+        movsd xmm7, real8 ptr [r10 + 8]
+        add r10, 16
+        add r11, 8
+        jmp qword ptr [r11]
+LEAF_END Load_XMM6_XMM7, _TEXT
+
+LEAF_ENTRY Load_XMM7, _TEXT
+        movsd xmm7, real8 ptr [r10]
+        add r10, 8
+        add r11, 8
+        jmp qword ptr [r11]
+LEAF_END Load_XMM7, _TEXT
+
+
+NESTED_ENTRY CallJittedMethodRetVoid, _TEXT, NoHandler
+        push_nonvol_reg rbp
+        mov  rbp, rsp
+        alloc_stack 0x10
+        save_reg_postrsp r10, 0 
+END_PROLOGUE
+        sub rsp, rcx // total stack space
+        mov r11, rdi // The routines list
+        mov r10, rsi // interpreter stack args
+        call qword ptr [r11]
+        mov r10, [rsp]
+        mov rsp, rbp
+        pop rbp
+        ret
+NESTED_END CallJittedMethodRetVoid, _TEXT
+
+NESTED_ENTRY CallJittedMethodRetBuff, _TEXT, NoHandler
+        push_nonvol_reg rbp
+        mov  rbp, rsp
+        alloc_stack 0x10
+        save_reg_postrsp r10, 0
+END_PROLOGUE
+        sub rsp, rcx // total stack space
+        mov r11, rdi // The routines list
+        mov r10, rsi // interpreter stack args
+        mov rdi, rdx // return buffer
+        call qword ptr [r11]
+        mov r10, [rsp]
+        mov rsp, rbp
+        pop rbp
+        ret
+NESTED_END CallJittedMethodRetBuff, _TEXT
+
+NESTED_ENTRY CallJittedMethodRetDouble, _TEXT, NoHandler
+        push_nonvol_reg rbp
+        mov  rbp, rsp
+        push_register rdx
+        push_register rax // align
+END_PROLOGUE
+        sub rsp, rcx // total stack space
+        mov r11, rdi // The routines list
+        mov r10, rsi // interpreter stack args
+        call qword ptr [r11]
+        //pop rdx
+        mov rdx, [rbp - 8]
+        movsd real8 ptr [rdx], xmm0
+        mov rsp, rbp
+        pop rbp
+        ret
+NESTED_END CallJittedMethodRetDouble, _TEXT
+
+NESTED_ENTRY CallJittedMethodRetI8, _TEXT, NoHandler
+        push_nonvol_reg rbp
+        mov  rbp, rsp
+        push_register rdx
+        push_register rax // align
+END_PROLOGUE
+        sub rsp, rcx // total stack space
+        mov r11, rdi // The routines list
+        mov r10, rsi // interpreter stack args
+        call qword ptr [r11]
+        mov rdx, [rbp - 8]
+        mov qword ptr [rdx], rax
+        mov rsp, rbp
+        pop rbp
+        ret
+NESTED_END CallJittedMethodRetI8, _TEXT
+
+NESTED_ENTRY CallJittedMethodRetI8I8, _TEXT, NoHandler
+        push_nonvol_reg rbp
+        mov  rbp, rsp
+        push_register rdx
+        push_register rax // align
+END_PROLOGUE
+        sub rsp, rcx // total stack space
+        mov r11, rdi // The routines list
+        mov r10, rsi // interpreter stack args
+        call qword ptr [r11]
+        mov rcx, [rbp - 8]
+        mov qword ptr [rcx], rax
+        mov qword ptr [rcx + 8], rdx
+        mov rsp, rbp
+        pop rbp
+        ret
+NESTED_END CallJittedMethodRetI8I8, _TEXT
+
+NESTED_ENTRY CallJittedMethodRetI8Double, _TEXT, NoHandler
+        push_nonvol_reg rbp
+        mov  rbp, rsp
+        push_register rdx
+        push_register rax // align
+END_PROLOGUE
+        sub rsp, rcx // total stack space
+        mov r11, rdi // The routines list
+        mov r10, rsi // interpreter stack args
+        call qword ptr [r11]
+        mov rcx, [rbp - 8]
+        mov qword ptr [rcx], rax
+        movsd real8 ptr [rcx + 8], xmm0
+        mov rsp, rbp
+        pop rbp
+        ret
+NESTED_END CallJittedMethodRetI8Double, _TEXT
+
+NESTED_ENTRY CallJittedMethodRetDoubleI8, _TEXT, NoHandler
+        push_nonvol_reg rbp
+        mov  rbp, rsp
+        push_register rdx
+        push_register rax // align
+END_PROLOGUE
+        sub rsp, rcx // total stack space
+        mov r11, rdi // The routines list
+        mov r10, rsi // interpreter stack args
+        call qword ptr [r11]
+        mov rcx, [rbp - 8]
+        movsd real8 ptr [rcx], xmm0
+        mov qword ptr [rcx + 8], rax
+        mov rsp, rbp
+        pop rbp
+        ret
+NESTED_END CallJittedMethodRetDoubleI8, _TEXT
+
+NESTED_ENTRY CallJittedMethodRetDoubleDouble, _TEXT, NoHandler
+        push_nonvol_reg rbp
+        mov  rbp, rsp
+        push_register rdx
+        push_register rax // align
+END_PROLOGUE
+        sub rsp, rcx // total stack space
+        mov r11, rdi // The routines list
+        mov r10, rsi // interpreter stack args
+        call qword ptr [r11]
+        mov rcx, [rbp - 8]
+        movsd real8 ptr [rcx], xmm0
+        movsd real8 ptr [rcx + 8], xmm1
+        mov rsp, rbp
+        pop rbp
+        ret
+NESTED_END CallJittedMethodRetDoubleDouble, _TEXT
+
+#endif // FEATURE_INTERPRETER

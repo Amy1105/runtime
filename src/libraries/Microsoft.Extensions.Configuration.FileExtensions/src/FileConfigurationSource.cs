@@ -9,44 +9,61 @@ using Microsoft.Extensions.FileProviders;
 namespace Microsoft.Extensions.Configuration
 {
     /// <summary>
-    /// Represents a base class for file based <see cref="IConfigurationSource"/>.
+    /// Provides the base class for file-based <see cref="IConfigurationSource"/>.
     /// </summary>
     public abstract class FileConfigurationSource : IConfigurationSource
     {
         /// <summary>
+<<<<<<< HEAD
         /// 用于访问文件的内容。
+=======
+        /// Gets or sets the provider used to access the contents of the file.
+>>>>>>> be6751023bf7837fa2f58bf1f7f6e7f6507c9798
         /// </summary>
         public IFileProvider? FileProvider { get; set; }
 
         /// <summary>
-        /// Set to true when <see cref="FileProvider"/> was not provided by user and can be safely disposed.
-        /// </summary>
-        internal bool OwnsFileProvider { get; private set; }
-
-        /// <summary>
-        /// The path to the file.
+        /// Gets or sets the path to the file.
         /// </summary>
         [DisallowNull]
         public string? Path { get; set; }
 
         /// <summary>
-        /// Determines if loading the file is optional.
+        /// Gets or sets a value that indicates whether loading the file is optional.
         /// </summary>
         public bool Optional { get; set; }
 
         /// <summary>
+<<<<<<< HEAD
         /// 确定在基础文件更改时是否加载源。
+=======
+        /// Gets or sets a value that indicates whether the source will be loaded if the underlying file changes.
+>>>>>>> be6751023bf7837fa2f58bf1f7f6e7f6507c9798
         /// </summary>
         public bool ReloadOnChange { get; set; }
 
         /// <summary>
+<<<<<<< HEAD
         /// 调用Load之前重新加载将等待的毫秒数。 
         /// 这有助于避免在文件完全写入之前触发重新加载。默认值为250。
+=======
+        /// Gets or sets the number of milliseconds that reload will wait before calling Load.
+>>>>>>> be6751023bf7837fa2f58bf1f7f6e7f6507c9798
         /// </summary>
+        /// <value>
+        /// The number of milliseconds that reload waits before calling Load. The default is 250.
+        /// </value>
+        /// <remarks>
+        /// This delay helps avoid triggering reload before a file is completely written.
+        /// </remarks>
         public int ReloadDelay { get; set; } = 250;
 
         /// <summary>
+<<<<<<< HEAD
         /// 如果FileConfigurationProvider中发生未捕获的异常，将被调用。加载。
+=======
+        /// Gets or sets the action that's called if an uncaught exception occurs in FileConfigurationProvider.Load.
+>>>>>>> be6751023bf7837fa2f58bf1f7f6e7f6507c9798
         /// </summary>
         public Action<FileLoadExceptionContext>? OnLoadException { get; set; }
 
@@ -54,7 +71,7 @@ namespace Microsoft.Extensions.Configuration
         /// Builds the <see cref="IConfigurationProvider"/> for this source.
         /// </summary>
         /// <param name="builder">The <see cref="IConfigurationBuilder"/>.</param>
-        /// <returns>A <see cref="IConfigurationProvider"/></returns>
+        /// <returns>To be added.</returns>
         public abstract IConfigurationProvider Build(IConfigurationBuilder builder);
 
         /// <summary>
@@ -64,18 +81,17 @@ namespace Microsoft.Extensions.Configuration
         /// <param name="builder">The <see cref="IConfigurationBuilder"/>.</param>
         public void EnsureDefaults(IConfigurationBuilder builder)
         {
-            if (FileProvider is null && builder.GetUserDefinedFileProvider() is null)
-            {
-                OwnsFileProvider = true;
-            }
-
             FileProvider ??= builder.GetFileProvider();
             OnLoadException ??= builder.GetFileLoadExceptionHandler();
         }
 
         /// <summary>
+<<<<<<< HEAD
         /// If no file provider has been set, for absolute Path, this will creates a physical file provider  for the nearest existing directory.
         /// 如果没有设置文件提供程序，对于绝对路径，这将为最近的现有目录创建一个物理文件提供程序
+=======
+        /// Creates a physical file provider for the nearest existing directory if no file provider has been set, for absolute Path.
+>>>>>>> be6751023bf7837fa2f58bf1f7f6e7f6507c9798
         /// </summary>
         public void ResolveFileProvider()
         {
@@ -92,7 +108,6 @@ namespace Microsoft.Extensions.Configuration
                 }
                 if (Directory.Exists(directory))
                 {
-                    OwnsFileProvider = true;
                     FileProvider = new PhysicalFileProvider(directory);
                     Path = pathToFile;
                 }

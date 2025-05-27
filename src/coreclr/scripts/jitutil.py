@@ -20,6 +20,7 @@ import tempfile
 import logging
 import time
 import tarfile
+import threading
 import urllib
 import urllib.request
 import zipfile
@@ -129,7 +130,7 @@ def decode_and_print(str_to_decode):
         return output
 
 
-def run_command(command_to_run, _cwd=None, _exit_on_fail=False, _output_file=None, _env=None):
+def run_command(command_to_run, _cwd=None, _exit_on_fail=False, _output_file=None, _env=None, _timeout=None):
     """ Runs the command.
 
     Args:
@@ -138,6 +139,7 @@ def run_command(command_to_run, _cwd=None, _exit_on_fail=False, _output_file=Non
         _exit_on_fail (bool): If it should exit on failure.
         _output_file ():
         _env: environment for sub-process, passed to subprocess.Popen()
+        _timeout: timeout in seconds, or None for no timeout
     Returns:
         (string, string, int): Returns a tuple of stdout, stderr, and command return code if _output_file= None
         Otherwise stdout, stderr are empty.
@@ -156,27 +158,44 @@ def run_command(command_to_run, _cwd=None, _exit_on_fail=False, _output_file=Non
     output_type = subprocess.STDOUT if _output_file else subprocess.PIPE
     with subprocess.Popen(command_to_run, env=_env, stdout=subprocess.PIPE, stderr=output_type, cwd=_cwd) as proc:
 
-        # For long running command, continuously print the output
-        if _output_file:
-            while True:
-                with open(_output_file, 'a') as of:
-                    output = proc.stdout.readline()
-                    if proc.poll() is not None:
-                        break
-                    if output:
-                        output_str = decode_and_print(output.strip())
-                        of.write(output_str + "\n")
-        else:
-            command_stdout, command_stderr = proc.communicate()
-            if len(command_stdout) > 0:
-                decode_and_print(command_stdout)
-            if len(command_stderr) > 0:
-                decode_and_print(command_stderr)
+        timer = None
+        if _timeout is not None:
+            def try_kill():
+                try:
+                    print("  Timeout reached; killing process")
+                    proc.kill()
+                except:
+                    pass
+
+            timer = threading.Timer(_timeout, try_kill)
+            timer.start()
+
+        try:
+            # For long running command, continuously print the output
+            if _output_file:
+                while True:
+                    with open(_output_file, 'a') as of:
+                        output = proc.stdout.readline()
+                        if proc.poll() is not None:
+                            break
+                        if output:
+                            output_str = decode_and_print(output.strip())
+                            of.write(output_str + "\n")
+            else:
+                command_stdout, command_stderr = proc.communicate()
+                if len(command_stdout) > 0:
+                    decode_and_print(command_stdout)
+                if len(command_stderr) > 0:
+                    decode_and_print(command_stderr)
+        finally:
+            if timer:
+                timer.cancel()
 
         return_code = proc.returncode
         if _exit_on_fail and return_code != 0:
             print("Command failed. Exiting.")
             sys.exit(1)
+
     return command_stdout, command_stderr, return_code
 
 
@@ -494,6 +513,29 @@ def determine_jit_name(host_os, target_os=None, host_arch=None, target_arch=None
         raise RuntimeError("Unknown host OS.")
 
 
+def get_deepest_existing_directory(path):
+    """ Given a path, find the deepest existing directory containing it. This
+        might be the path itself, or a parent directory. If no such directory
+        is found, None is returned.
+
+    Args:
+        path (str) : path to check
+
+    Returns:
+        As described above
+    """
+    path = os.path.abspath(path)
+    lastPath = ""
+
+    # When os.path.dirname() is called on the root directory ("C:\\" on Windows or "/" on Linux),
+    # if returns itself.
+    while not os.path.isdir(path) and path != lastPath:
+        lastPath = path
+        path = os.path.dirname(path)
+
+    return path if os.path.isdir(path) else None
+
+
 ################################################################################
 ##
 ## Azure Storage functions
@@ -548,7 +590,7 @@ def require_azure_storage_libraries(need_azure_storage_blob=True, need_azure_ide
         logging.error("  pip install azure-storage-blob azure-identity")
         logging.error("or (Windows):")
         logging.error("  py -3 -m pip install azure-storage-blob azure-identity")
-        logging.error("See also https://docs.microsoft.com/en-us/azure/storage/blobs/storage-quickstart-blobs-python")
+        logging.error("See also https://learn.microsoft.com/azure/storage/blobs/storage-quickstart-blobs-python")
         raise RuntimeError("Missing Azure Storage package.")
 
     # The Azure packages spam all kinds of output to the logging channels.
@@ -562,7 +604,7 @@ def report_azure_error():
     """ Report an Azure error
     """
     logging.error("A problem occurred accessing Azure. Are you properly authenticated using the Azure CLI?")
-    logging.error("Install the Azure CLI from https://docs.microsoft.com/en-us/cli/azure/install-azure-cli.")
+    logging.error("Install the Azure CLI from https://learn.microsoft.com/cli/azure/install-azure-cli.")
     logging.error("Then log in to Azure using `az login`.")
 
 
@@ -753,28 +795,26 @@ def download_files(paths, target_dir, verbose=True, fail_if_not_found=True, is_a
                         shutil.copy2(item_path, download_path)
 
                 if verbose:
-                    logging.info("Uncompress %s", download_path)
+                    logging.info("Uncompress %s => %s", download_path, target_dir)
 
                 if item_path.lower().endswith(".zip"):
-                    with zipfile.ZipFile(download_path, "r") as file_handle:
-                        file_handle.extractall(temp_location)
+                    with zipfile.ZipFile(download_path, "r") as zip:
+                        zip.extractall(target_dir)
+                        archive_names = zip.namelist()
                 else:
-                    with tarfile.open(download_path, "r") as file_handle:
-                        file_handle.extractall(temp_location)
+                    with tarfile.open(download_path, "r") as tar:
+                        tar.extractall(target_dir)
+                        archive_names = tar.getnames()
 
-                # Copy everything that was extracted to the target directory.
-                copy_directory(temp_location, target_dir, verbose_copy=verbose,
-                               match_func=lambda path: not path.endswith(".zip") and not path.endswith(".tar.gz"))
+                for archive_name in archive_names:
+                    if archive_name.endswith("/"):
+                        # Directory
+                        continue
 
-                # The caller wants to know where all the files ended up, so compute that.
-                for dirpath, _, files in os.walk(temp_location, topdown=True):
-                    for file_name in files:
-                        if not file_name.endswith(".zip") and not file_name.endswith(".tar.gz"):
-                            full_file_path = os.path.join(dirpath, file_name)
-                            target_path = full_file_path.replace(temp_location, target_dir)
-                            local_paths.append(target_path)
+                    target_path = os.path.join(target_dir, archive_name.replace("/", os.path.sep))
+                    local_paths.append(target_path)
             else:
-                # Not a zip file; download directory to target directory
+                # Not an archive
                 download_path = os.path.join(target_dir, item_name)
                 if is_item_url:
                     ok = download_one_url(item_path, download_path, fail_if_not_found=fail_if_not_found, is_azure_storage=is_azure_storage, display_progress=display_progress)

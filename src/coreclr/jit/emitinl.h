@@ -403,8 +403,8 @@ inline ssize_t emitter::emitGetInsAmdAny(const instrDesc* id) const
 
 /*static*/ inline unsigned emitter::emitDecodeCallGCregs(instrDesc* id)
 {
-    unsigned regmask = 0;
-    unsigned encodeMask;
+    regMaskTP regmask = RBM_NONE;
+    unsigned  encodeMask;
 
 #ifdef TARGET_X86
     assert(REGNUM_BITS >= 3);
@@ -568,7 +568,7 @@ inline ssize_t emitter::emitGetInsAmdAny(const instrDesc* id) const
     NYI("unknown target");
 #endif
 
-    return regmask;
+    return (unsigned int)regmask.getLow();
 }
 
 #ifdef TARGET_XARCH
@@ -585,13 +585,23 @@ inline bool insIsCMOV(instruction ins)
  *  false. Returns the final result of the callback.
  */
 template <typename Callback>
-bool emitter::emitGenNoGCLst(Callback& cb)
+bool emitter::emitGenNoGCLst(Callback& cb, bool skipMainPrologsAndEpilogs /* = false */)
 {
     for (insGroup* ig = emitIGlist; ig; ig = ig->igNext)
     {
-        if (ig->igFlags & IGF_NOGCINTERRUPT)
+        if (skipMainPrologsAndEpilogs)
         {
-            if (!cb(ig->igFuncIdx, ig->igOffs, ig->igSize))
+            if (ig == emitPrologIG)
+                continue;
+            if (ig->igFlags & IGF_EPILOG)
+                continue;
+        }
+        if ((ig->igFlags & IGF_NOGCINTERRUPT) && ig->igSize > 0)
+        {
+            emitter::instrDesc* id = emitFirstInstrDesc(ig->igData);
+            assert(id != nullptr);
+            assert(id->idCodeSize() > 0);
+            if (!cb(ig->igFuncIdx, ig->igOffs, ig->igSize, id->idCodeSize(), ig->igFlags & (IGF_FUNCLET_PROLOG)))
             {
                 return false;
             }

@@ -54,8 +54,11 @@
 typedef int BOOL;
 typedef uint32_t DWORD;
 typedef uint64_t DWORD64;
+#ifdef _MSC_VER
+typedef unsigned long ULONG;
+#else
 typedef uint32_t ULONG;
-
+#endif
 // -----------------------------------------------------------------------------------------------------------
 // HRESULT subset.
 
@@ -96,14 +99,6 @@ inline HRESULT HRESULT_FROM_WIN32(unsigned long x)
 #define INFINITE 0xFFFFFFFF
 
 #define ZeroMemory(Destination,Length) memset((Destination),0,(Length))
-
-#ifndef min
-#define min(a,b) (((a) < (b)) ? (a) : (b))
-#endif
-
-#ifndef max
-#define max(a,b) (((a) > (b)) ? (a) : (b))
-#endif
 
 #define C_ASSERT(cond) static_assert( cond, #cond )
 
@@ -148,7 +143,10 @@ typedef DWORD (WINAPI *PTHREAD_START_ROUTINE)(void* lpThreadParameter);
   #pragma intrinsic(__dmb)
   #define MemoryBarrier() { __dmb(_ARM64_BARRIER_SY); }
 
- #elif defined(HOST_AMD64)
+ #elif defined(HOST_BROWSER)
+  #define YieldProcessor()
+  #define MemoryBarrier __sync_synchronize
+#elif defined(HOST_AMD64)
 
   extern "C" void
   _mm_pause (
@@ -385,17 +383,11 @@ inline void* ALIGN_DOWN(void* ptr, size_t alignment)
     return reinterpret_cast<void*>(ALIGN_DOWN(as_size_t, alignment));
 }
 
-inline int GetRandomInt(int max)
-{
-    return rand() % max;
-}
-
 typedef struct _PROCESSOR_NUMBER {
     uint16_t Group;
     uint8_t Number;
     uint8_t Reserved;
 } PROCESSOR_NUMBER, *PPROCESSOR_NUMBER;
-
 #endif // _INC_WINDOWS
 
 // -----------------------------------------------------------------------------------------------------------
@@ -473,7 +465,7 @@ typedef DPTR(uint8_t)   PTR_uint8_t;
 #define _ASSERTE(_expr) ASSERT(_expr)
 #endif
 #define CONSISTENCY_CHECK(_expr) ASSERT(_expr)
-#define PREFIX_ASSUME(cond) ASSERT(cond)
+#define COMPILER_ASSUME(cond) ASSERT(cond)
 #define EEPOLICY_HANDLE_FATAL_ERROR(error) ASSERT(!"EEPOLICY_HANDLE_FATAL_ERROR")
 #define UI64(_literal) _literal##ULL
 

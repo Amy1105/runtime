@@ -43,7 +43,7 @@ namespace Microsoft.Extensions.Logging.Debug
                 return;
             }
 
-            ThrowHelper.ThrowIfNull(formatter);
+            ArgumentNullException.ThrowIfNull(formatter);
 
             string message = formatter(state, exception);
 
@@ -52,7 +52,7 @@ namespace Microsoft.Extensions.Logging.Debug
                 return;
             }
 
-            message = $"{ logLevel }: {message}";
+            message = $"{logLevel}: {message}";
 
             if (exception != null)
             {

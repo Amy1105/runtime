@@ -1,12 +1,12 @@
 set(CMAKE_INCLUDE_CURRENT_DIR ON)
 
-set( GCINFO_ALLARCH_SOURCES
+set(GCINFO_ALLARCH_SOURCES
   arraylist.cpp
   gcinfoencoder.cpp
   simplerhash.cpp
 )
 
-set( GCINFO_I386_SOURCES
+set(GCINFO_I386_SOURCES
   ../gcdump/gcdump.cpp
   ../gcdump/i386/gcdumpx86.cpp
 )
@@ -24,13 +24,7 @@ if(CLR_CMAKE_TARGET_ARCH_I386)
 endif(CLR_CMAKE_TARGET_ARCH_I386)
 
 
-add_library_clr(gcinfo_obj
-    OBJECT
-    ${GCINFO_SOURCES}
-)
-
-add_library(gcinfo INTERFACE)
-target_sources(gcinfo INTERFACE $<TARGET_OBJECTS:gcinfo_obj>)
+add_library_clr(gcinfo OBJECT ${GCINFO_SOURCES})
 
 install (FILES gcinfoencoder.cpp
                DESTINATION gcinfo)
@@ -72,6 +66,10 @@ endif()
 if (CLR_CMAKE_TARGET_ARCH_ARM64 OR CLR_CMAKE_TARGET_ARCH_AMD64)
   create_gcinfo_lib(TARGET gcinfo_universal_arm64 OS universal ARCH arm64)
   create_gcinfo_lib(TARGET gcinfo_unix_x64 OS unix ARCH x64)
+  if (CLR_CMAKE_BUILD_COMMUNITY_ALTJITS EQUAL 1)
+    create_gcinfo_lib(TARGET gcinfo_unix_loongarch64 OS unix ARCH loongarch64)
+    create_gcinfo_lib(TARGET gcinfo_unix_riscv64 OS unix ARCH riscv64)
+  endif(CLR_CMAKE_BUILD_COMMUNITY_ALTJITS EQUAL 1)
   create_gcinfo_lib(TARGET gcinfo_win_x64 OS win ARCH x64)
 endif (CLR_CMAKE_TARGET_ARCH_ARM64 OR CLR_CMAKE_TARGET_ARCH_AMD64)
 
@@ -83,8 +81,10 @@ if (CLR_CMAKE_TARGET_ARCH_RISCV64)
   create_gcinfo_lib(TARGET gcinfo_unix_riscv64 OS unix ARCH riscv64)
 endif (CLR_CMAKE_TARGET_ARCH_RISCV64)
 
-create_gcinfo_lib(TARGET gcinfo_universal_arm OS universal ARCH arm)
-create_gcinfo_lib(TARGET gcinfo_win_x86 OS win ARCH x86)
+if (NOT CLR_CMAKE_TARGET_ARCH_RISCV64)
+  create_gcinfo_lib(TARGET gcinfo_universal_arm OS universal ARCH arm)
+  create_gcinfo_lib(TARGET gcinfo_win_x86 OS win ARCH x86)
+endif (NOT CLR_CMAKE_TARGET_ARCH_RISCV64)
 
 if (CLR_CMAKE_TARGET_ARCH_I386 AND CLR_CMAKE_TARGET_UNIX)
   create_gcinfo_lib(TARGET gcinfo_unix_x86 OS unix ARCH x86)

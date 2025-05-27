@@ -1,8 +1,8 @@
 // Licensed to the .NET Foundation under one or more agreements.
 // The .NET Foundation licenses this file to you under the MIT license.
 
-using System.Reflection;
 using System.Diagnostics.CodeAnalysis;
+using System.Reflection;
 using System.Runtime.CompilerServices;
 using System.Runtime.InteropServices;
 using System.Runtime.Versioning;
@@ -25,23 +25,12 @@ namespace System
 
         internal virtual bool IsTypeBuilder() => false;
 
-        public bool IsInterface
-        {
-            get
-            {
-                if (this is RuntimeType rt)
-                    return RuntimeTypeHandle.IsInterface(rt);
-
-                return (GetAttributeFlagsImpl() & TypeAttributes.ClassSemanticsMask) == TypeAttributes.Interface;
-            }
-        }
-
         [RequiresUnreferencedCode("The type might be removed")]
         [System.Security.DynamicSecurityMethod] // Methods containing StackCrawlMark local var has to be marked DynamicSecurityMethod
         public static Type? GetType(string typeName, bool throwOnError, bool ignoreCase)
         {
             StackCrawlMark stackMark = StackCrawlMark.LookForMyCaller;
-            return RuntimeType.GetType(typeName, throwOnError, ignoreCase, ref stackMark);
+            return GetType(typeName, null, null, throwOnError, ignoreCase, false, ref stackMark);
         }
 
         [RequiresUnreferencedCode("The type might be removed")]
@@ -49,7 +38,7 @@ namespace System
         public static Type? GetType(string typeName, bool throwOnError)
         {
             StackCrawlMark stackMark = StackCrawlMark.LookForMyCaller;
-            return RuntimeType.GetType(typeName, throwOnError, false, ref stackMark);
+            return GetType(typeName, null, null, throwOnError, false, false, ref stackMark);
         }
 
         [RequiresUnreferencedCode("The type might be removed")]
@@ -57,7 +46,7 @@ namespace System
         public static Type? GetType(string typeName)
         {
             StackCrawlMark stackMark = StackCrawlMark.LookForMyCaller;
-            return RuntimeType.GetType(typeName, false, false, ref stackMark);
+            return GetType(typeName, null, null, false, false, false, ref stackMark);
         }
 
         [RequiresUnreferencedCode("The type might be removed")]
@@ -65,7 +54,7 @@ namespace System
         public static Type? GetType(string typeName, Func<AssemblyName, Assembly?>? assemblyResolver, Func<Assembly?, string, bool, Type?>? typeResolver)
         {
             StackCrawlMark stackMark = StackCrawlMark.LookForMyCaller;
-            return GetType(typeName, assemblyResolver, typeResolver, false, false, ref stackMark);
+            return GetType(typeName, assemblyResolver, typeResolver, false, false, true, ref stackMark);
         }
 
         [RequiresUnreferencedCode("The type might be removed")]
@@ -73,7 +62,7 @@ namespace System
         public static Type? GetType(string typeName, Func<AssemblyName, Assembly?>? assemblyResolver, Func<Assembly?, string, bool, Type?>? typeResolver, bool throwOnError)
         {
             StackCrawlMark stackMark = StackCrawlMark.LookForMyCaller;
-            return GetType(typeName, assemblyResolver, typeResolver, throwOnError, false, ref stackMark);
+            return GetType(typeName, assemblyResolver, typeResolver, throwOnError, false, true, ref stackMark);
         }
 
         [RequiresUnreferencedCode("The type might be removed")]
@@ -81,13 +70,13 @@ namespace System
         public static Type? GetType(string typeName, Func<AssemblyName, Assembly?>? assemblyResolver, Func<Assembly?, string, bool, Type?>? typeResolver, bool throwOnError, bool ignoreCase)
         {
             StackCrawlMark stackMark = StackCrawlMark.LookForMyCaller;
-            return GetType(typeName, assemblyResolver, typeResolver, throwOnError, ignoreCase, ref stackMark);
+            return GetType(typeName, assemblyResolver, typeResolver, throwOnError, ignoreCase, true, ref stackMark);
         }
 
         [RequiresUnreferencedCode("The type might be removed")]
-        private static Type? GetType(string typeName, Func<AssemblyName, Assembly?>? assemblyResolver, Func<Assembly?, string, bool, Type?>? typeResolver, bool throwOnError, bool ignoreCase, ref StackCrawlMark stackMark)
+        private static Type? GetType(string typeName, Func<AssemblyName, Assembly?>? assemblyResolver, Func<Assembly?, string, bool, Type?>? typeResolver, bool throwOnError, bool ignoreCase, bool extensibleParser, ref StackCrawlMark stackMark)
         {
-            return TypeNameParser.GetType(typeName, assemblyResolver, typeResolver, throwOnError, ignoreCase, ref stackMark);
+            return TypeNameResolver.GetType(typeName, assemblyResolver, typeResolver, throwOnError, ignoreCase, extensibleParser, ref stackMark);
         }
 
         public static Type? GetTypeFromHandle(RuntimeTypeHandle handle)

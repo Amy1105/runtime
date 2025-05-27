@@ -10,8 +10,12 @@ using Microsoft.Extensions.Primitives;
 namespace Microsoft.Extensions.Configuration
 {
     /// <summary>
+<<<<<<< HEAD
     /// The root node for a configuration.
     /// 配置的根节点。
+=======
+    /// Represents the root node for a configuration.
+>>>>>>> be6751023bf7837fa2f58bf1f7f6e7f6507c9798
     /// </summary>
     [DebuggerDisplay("{DebuggerToString(),nq}")]
     [DebuggerTypeProxy(typeof(ConfigurationRootDebugView))]
@@ -28,7 +32,7 @@ namespace Microsoft.Extensions.Configuration
         /// <param name="providers">The <see cref="IConfigurationProvider"/>s for this configuration.</param>
         public ConfigurationRoot(IList<IConfigurationProvider> providers)
         {
-            ThrowHelper.ThrowIfNull(providers);
+            ArgumentNullException.ThrowIfNull(providers);
 
             _providers = providers;
             _changeTokenRegistrations = new List<IDisposable>(providers.Count);
@@ -56,7 +60,7 @@ namespace Microsoft.Extensions.Configuration
         }
 
         /// <summary>
-        /// Gets the immediate children sub-sections.
+        /// Gets the immediate children subsections.
         /// </summary>
         /// <returns>The children.</returns>
         public IEnumerable<IConfigurationSection> GetChildren() => this.GetChildrenImplementation(null);
@@ -68,19 +72,19 @@ namespace Microsoft.Extensions.Configuration
         public IChangeToken GetReloadToken() => _changeToken;
 
         /// <summary>
-        /// Gets a configuration sub-section with the specified key.
+        /// Gets a configuration subsection with the specified key.
         /// </summary>
         /// <param name="key">The key of the configuration section.</param>
         /// <returns>The <see cref="IConfigurationSection"/>.</returns>
         /// <remarks>
-        ///     This method will never return <c>null</c>. If no matching sub-section is found with the specified key,
-        ///     an empty <see cref="IConfigurationSection"/> will be returned.
+        ///     This method will never return <c>null</c>. If no matching subsection is found with the specified key,
+        ///     an empty <see cref="IConfigurationSection"/> is returned.
         /// </remarks>
         public IConfigurationSection GetSection(string key)
             => new ConfigurationSection(this, key);
 
         /// <summary>
-        /// Force the configuration values to be reloaded from the underlying sources.
+        /// Forces the configuration values to be reloaded from the underlying sources.
         /// </summary>
         public void Reload()
         {

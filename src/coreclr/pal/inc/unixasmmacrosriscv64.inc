@@ -37,6 +37,12 @@ C_FUNC(\Name\()_End):
     nop
 .endm
 
+.macro ALTERNATE_ENTRY Name
+        .global C_FUNC(\Name)
+        .hidden C_FUNC(\Name)
+C_FUNC(\Name):
+.endm
+
 .macro PREPARE_EXTERNAL_VAR Name, HelperReg
     lla  \HelperReg, \Name
 .endm
@@ -222,8 +228,12 @@ C_FUNC(\Name\()_End):
 //            GPR_a1
 //            GPR_a0
 //
-// General Registers:
+// Callee Saved Registers:
+//            GPR_gp
 //            GPR_tp
+//            GPR_s11
+//            GPR_s10
+//            GPR_s9
 //            GPR_s8
 //            GPR_s7
 //            GPR_s6
@@ -232,7 +242,6 @@ C_FUNC(\Name\()_End):
 //            GPR_s3
 //            GPR_s2
 //            GPR_s1
-//            GPR_s0
 //            GPR_ra
 //            GPR_fp
 //
@@ -256,6 +265,7 @@ C_FUNC(\Name\()_End):
 
     __PWTB_FloatArgumentRegisters = \extraLocals
 
+    // Note, stack (see __PWTB_StackAlloc variable) must be 16 byte aligned.
     .if ((__PWTB_FloatArgumentRegisters % 16) != 0)
         __PWTB_FloatArgumentRegisters = __PWTB_FloatArgumentRegisters + 8
     .endif
@@ -268,10 +278,10 @@ C_FUNC(\Name\()_End):
 
 
     __PWTB_CalleeSavedRegisters = __PWTB_TransitionBlock
-    __PWTB_ArgumentRegisters = __PWTB_TransitionBlock + 120
+    __PWTB_ArgumentRegisters = __PWTB_TransitionBlock + 120 + 8
 
-    // Including fp, ra, s1-s11, tp, gp, and (a0-a7)arguments. (1+1+11+1+1)*8 + 8*8.
-    __PWTB_StackAlloc = __PWTB_TransitionBlock + 120 + 64
+    // Including fp, ra, s1-s11, tp, gp, padding and (a0-a7)arguments. (1+1+11+1+1)*8 + 8 + 8*8.
+    __PWTB_StackAlloc = __PWTB_TransitionBlock + 120 + 8 + 64
     PROLOG_STACK_ALLOC __PWTB_StackAlloc
     PROLOG_SAVE_REG_PAIR  fp, ra, __PWTB_CalleeSavedRegisters, 1
 
@@ -289,8 +299,14 @@ C_FUNC(\Name\()_End):
 .endm
 
 .macro EPILOG_WITH_TRANSITION_BLOCK_RETURN
-// TODO RISCV NYI
-    sw  ra, 0(zero)
+
+    RESTORE_CALLEESAVED_REGISTERS sp, __PWTB_CalleeSavedRegisters
+
+    EPILOG_RESTORE_REG_PAIR       fp, ra, __PWTB_CalleeSavedRegisters
+
+    EPILOG_STACK_FREE             __PWTB_StackAlloc
+
+    ret
 .endm
 
 
@@ -322,4 +338,20 @@ C_FUNC(\Name\()_End):
 .macro GenerateRedirectedHandledJITCaseStub reason
 // TODO RISCV NYI
     sw  ra, 0(zero)
+.endm
+
+//-----------------------------------------------------------------------------
+// Macro used to check (in debug builds only) whether the stack is 16-bytes aligned (a requirement before calling
+// out into C++/OS code). Invoke this directly after your prolog (if the stack frame size is fixed) or directly
+// before a call (if you have a frame pointer and a dynamic stack). A breakpoint will be invoked if the stack
+// is misaligned.
+//
+.macro  CHECK_STACK_ALIGNMENT
+
+#ifdef _DEBUG
+        andi    t4, sp, 0xf
+        beq     t4, zero, 0f
+        EMIT_BREAKPOINT
+0:
+#endif
 .endm

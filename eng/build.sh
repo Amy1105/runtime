@@ -32,7 +32,7 @@ usage()
   echo "                                  [Default: Debug]"
   echo "  --os                            Target operating system: windows, linux, freebsd, osx, maccatalyst, tvos,"
   echo "                                  tvossimulator, ios, iossimulator, android, browser, wasi, netbsd, illumos, solaris"
-  echo "                                  linux-musl, linux-bionic or haiku."
+  echo "                                  linux-musl, linux-bionic, tizen, or haiku."
   echo "                                  [Default: Your machine's OS.]"
   echo "  --outputrid <rid>               Optional argument that overrides the target rid name."
   echo "  --projects <value>              Project or solution file(s) to build."
@@ -48,6 +48,8 @@ usage()
   echo "  --usemonoruntime                Product a .NET runtime with Mono as the underlying runtime."
   echo "  --verbosity (-v)                MSBuild verbosity: q[uiet], m[inimal], n[ormal], d[etailed], and diag[nostic]."
   echo "                                  [Default: Minimal]"
+  echo "  --use-bootstrap                 Use the results of building the bootstrap subset to build published tools on the target machine."
+  echo "  --bootstrap                     Build the bootstrap subset and then build the repo with --use-bootstrap."
   echo ""
 
   echo "Actions (defaults to --restore --build):"
@@ -65,10 +67,9 @@ usage()
   echo ""
 
   echo "Libraries settings:"
-  echo "  --allconfigurations        Build packages for all build configurations."
   echo "  --coverage                 Collect code coverage when testing."
-  echo "  --framework (-f)           Build framework: net9.0 or net48."
-  echo "                             [Default: net9.0]"
+  echo "  --framework (-f)           Build framework: net10.0 or net481."
+  echo "                             [Default: net10.0]"
   echo "  --testnobuild              Skip building tests when invoking -test."
   echo "  --testscope                Test scope, allowed values: innerloop, outerloop, all."
   echo ""
@@ -141,7 +142,7 @@ initDistroRid()
     local isCrossBuild="$3"
 
     # Only pass ROOTFS_DIR if __DoCrossArchBuild is specified and the current platform is not an Apple platform (that doesn't use rootfs)
-    if [[ $isCrossBuild == 1 && "$targetOs" != "osx" && "$targetOs" != "ios" && "$targetOs" != "iossimulator" && "$targetOs" != "tvos" && "$targetOs" != "tvossimulator" && "$targetOs" != "maccatalyst" ]]; then
+    if [[ $isCrossBuild == 1 && "$targetOs" != "osx" && "$targetOs" != "android" && "$targetOs" != "ios" && "$targetOs" != "iossimulator" && "$targetOs" != "tvos" && "$targetOs" != "tvossimulator" && "$targetOs" != "maccatalyst" ]]; then
         passedRootfsDir=${ROOTFS_DIR}
     fi
     initDistroRidGlobal "${targetOs}" "${targetArch}" "${passedRootfsDir}"
@@ -149,7 +150,7 @@ initDistroRid()
 
 showSubsetHelp()
 {
-  "$scriptroot/common/build.sh" "-restore" "-build" "/p:Subset=help" "/clp:nosummary"
+  "$scriptroot/common/build.sh" "-restore" "-build" "/p:Subset=help" "/clp:nosummary /tl:false"
 }
 
 arguments=''
@@ -157,8 +158,9 @@ cmakeargs=''
 extraargs=''
 crossBuild=0
 portableBuild=1
+bootstrap=0
 
-source $scriptroot/native/init-os-and-arch.sh
+source $scriptroot/common/native/init-os-and-arch.sh
 
 hostArch=$arch
 
@@ -308,8 +310,8 @@ while [[ $# > 0 ]]; do
       shift 2
       ;;
 
-     -allconfigurations)
-      arguments="$arguments /p:BuildAllConfigurations=true"
+     -pack)
+      arguments="$arguments --pack /p:BuildAllConfigurations=true"
       shift 1
       ;;
 
@@ -509,6 +511,16 @@ while [[ $# > 0 ]]; do
       shift 1
       ;;
 
+      -use-bootstrap)
+      arguments="$arguments /p:UseBootstrap=true"
+      shift 1
+      ;;
+
+      -bootstrap)
+      bootstrap=1
+      shift 1
+      ;;
+
       -fsanitize)
       if [ -z ${2+x} ]; then
         echo "No value for -fsanitize is supplied. See help (--help) for supported values." 1>&2
@@ -522,6 +534,11 @@ while [[ $# > 0 ]]; do
       sanitizers="${opt/#-fsanitize=/}" # -fsanitize=address => address
       arguments="$arguments /p:EnableNativeSanitizers=$sanitizers"
       shift 2
+      ;;
+
+      -verbose)
+      arguments="$arguments /p:CoreclrVerbose=true"
+      shift 1
       ;;
 
       *)
@@ -538,6 +555,10 @@ fi
 if [[ "$os" == "browser" ]]; then
     # override default arch for Browser, we only support wasm
     arch=wasm
+    # because on docker instance without swap file, MSBuild nodes need to make some room for LLVM
+    # https://github.com/dotnet/runtime/issues/113724
+    # this is hexa percentage: 46-> 70%
+    export DOTNET_GCHeapHardLimitPercent="46"
 fi
 if [[ "$os" == "wasi" ]]; then
     # override default arch for wasi, we only support wasm
@@ -545,8 +566,11 @@ if [[ "$os" == "wasi" ]]; then
 fi
 
 if [[ "${TreatWarningsAsErrors:-}" == "false" ]]; then
-    arguments="$arguments -warnAsError 0"
+    arguments="$arguments -warnAsError false"
 fi
+
+# disable terminal logger for now: https://github.com/dotnet/runtime/issues/97211
+arguments="$arguments -tl:false"
 
 initDistroRid "$os" "$arch" "$crossBuild"
 
@@ -559,4 +583,21 @@ export DOTNETSDK_ALLOW_TARGETING_PACK_CACHING=0
 cmakeargs="${cmakeargs// /%20}"
 arguments="$arguments /p:TargetArchitecture=$arch /p:BuildArchitecture=$hostArch"
 arguments="$arguments /p:CMakeArgs=\"$cmakeargs\" $extraargs"
+
+if [[ "$bootstrap" == "1" ]]; then
+  # Strip build actions other than -restore and -build from the arguments for the bootstrap build.
+  bootstrapArguments="$arguments"
+  for flag in --sign --publish --pack --test -sign -publish -pack -test; do
+    bootstrapArguments="${bootstrapArguments//$flag/}"
+  done
+  "$scriptroot/common/build.sh" $bootstrapArguments /p:Subset=bootstrap -bl:$scriptroot/../artifacts/log/bootstrap.binlog
+
+  # Remove artifacts from the bootstrap build so the product build is a "clean" build.
+  echo "Cleaning up artifacts from bootstrap build..."
+  rm -r "$scriptroot/../artifacts/bin"
+  # Remove all directories in obj except for the source-built-upstream-cache directory to avoid breaking SourceBuild.
+  find "$scriptroot/../artifacts/obj" -mindepth 1 -maxdepth 1 ! -name 'source-built-upstream-cache' -exec rm -rf {} +
+  arguments="$arguments /p:UseBootstrap=true"
+fi
+
 "$scriptroot/common/build.sh" $arguments

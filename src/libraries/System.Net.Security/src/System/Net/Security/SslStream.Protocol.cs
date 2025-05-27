@@ -1,6 +1,7 @@
 // Licensed to the .NET Foundation under one or more agreements.
 // The .NET Foundation licenses this file to you under the MIT license.
 
+using System.Buffers;
 using System.Collections.Generic;
 using System.Diagnostics;
 using System.Runtime.CompilerServices;
@@ -15,6 +16,39 @@ namespace System.Net.Security
 {
     public partial class SslStream
     {
+        private const string DisableTlsResumeCtxSwitch = "System.Net.Security.DisableTlsResume";
+        private const string DisableTlsResumeEnvironmentVariable = "DOTNET_SYSTEM_NET_SECURITY_DISABLETLSRESUME";
+
+        private static volatile int s_disableTlsResume = -1;
+
+        internal static bool DisableTlsResume
+        {
+            get
+            {
+                int disableTlsResume = s_disableTlsResume;
+                if (disableTlsResume != -1)
+                {
+                    return disableTlsResume != 0;
+                }
+
+                // First check for the AppContext switch, giving it priority over the environment variable.
+                if (AppContext.TryGetSwitch(DisableTlsResumeCtxSwitch, out bool value))
+                {
+                    s_disableTlsResume = value ? 1 : 0;
+                }
+                else
+                {
+                    // AppContext switch wasn't used. Check the environment variable.
+                    s_disableTlsResume =
+                        Environment.GetEnvironmentVariable(DisableTlsResumeEnvironmentVariable) is string envVar &&
+                        (envVar == "1" || envVar.Equals("true", StringComparison.OrdinalIgnoreCase)) ? 1 : 0;
+                }
+
+                return s_disableTlsResume != 0;
+            }
+        }
+
+
         private SafeFreeCredentials? _credentialsHandle;
         private SafeDeleteSslContext? _securityContext;
 
@@ -22,6 +56,9 @@ namespace System.Net.Security
         private X509Certificate? _selectedClientCertificate;
         private X509Certificate2? _remoteCertificate;
         private bool _remoteCertificateExposed;
+
+        // -1 for uninitialized, 0 for false, 1 for true, should be accessed via IsLocalClientCertificateUsed property
+        private int _localClientCertificateUsed = -1;
 
         // These are the MAX encrypt buffer output sizes, not the actual sizes.
         private int _headerSize = 5; //ATTN must be set to at least 5 by default
@@ -48,11 +85,28 @@ namespace System.Net.Security
             }
         }
 
+        // IsLocalCertificateUsed is expensive, but it does not change during the lifetime of the SslStream except for renegotiation, so we
+        // can cache the value.
+        private bool IsLocalClientCertificateUsed
+        {
+            get
+            {
+                if (_localClientCertificateUsed == -1)
+                {
+                    _localClientCertificateUsed = CertificateValidationPal.IsLocalCertificateUsed(_credentialsHandle, _securityContext!)
+                        ? 1
+                        : 0;
+                }
+
+                return _localClientCertificateUsed == 1;
+            }
+        }
+
         internal X509Certificate? LocalClientCertificate
         {
             get
             {
-                if (_selectedClientCertificate != null && CertificateValidationPal.IsLocalCertificateUsed(_credentialsHandle, _securityContext!))
+                if (_selectedClientCertificate != null && IsLocalClientCertificateUsed)
                 {
                     return _selectedClientCertificate;
                 }
@@ -140,40 +194,44 @@ namespace System.Net.Security
                 // Protecting from X509Certificate2 derived classes.
                 X509Certificate2? certEx = MakeEx(certificate);
 
-                if (certEx != null)
+                if (certEx is null)
                 {
-                    if (certEx.HasPrivateKey)
-                    {
-                        if (NetEventSource.Log.IsEnabled())
-                            NetEventSource.Log.CertIsType2(instance);
-
-                        return certEx;
-                    }
-
-                    if (!object.ReferenceEquals(certificate, certEx))
-                    {
-                        certEx.Dispose();
-                    }
+                    return null;
                 }
 
-                string certHash = certEx!.Thumbprint;
+                if (certEx.HasPrivateKey)
+                {
+                    if (NetEventSource.Log.IsEnabled())
+                        NetEventSource.Log.CertIsType2(instance);
+
+                    return certEx;
+                }
+
+                Span<byte> certHash = stackalloc byte[SHA512.HashSizeInBytes];
+                bool ret = certEx.TryGetCertHash(HashAlgorithmName.SHA512, certHash, out int written);
+                Debug.Assert(ret && written == certHash.Length);
+
+                if (!object.ReferenceEquals(certificate, certEx))
+                {
+                    certEx.Dispose();
+                }
 
                 // ELSE Try the MY user and machine stores for private key check.
                 // For server side mode MY machine store takes priority.
                 X509Certificate2? found =
-                    FindCertWithPrivateKey(isServer) ??
-                    FindCertWithPrivateKey(!isServer);
+                    FindCertWithPrivateKey(isServer, certHash) ??
+                    FindCertWithPrivateKey(!isServer, certHash);
                 if (found is not null)
                 {
                     return found;
                 }
 
-                X509Certificate2? FindCertWithPrivateKey(bool isServer)
+                X509Certificate2? FindCertWithPrivateKey(bool isServer, ReadOnlySpan<byte> certHash)
                 {
                     if (CertificateValidationPal.EnsureStoreOpened(isServer) is X509Store store)
                     {
                         X509Certificate2Collection certs = store.Certificates;
-                        X509Certificate2Collection found = certs.Find(X509FindType.FindByThumbprint, certHash, false);
+                        X509Certificate2Collection found = certs.FindByThumbprint(HashAlgorithmName.SHA512, certHash);
                         X509Certificate2? cert = null;
                         try
                         {
@@ -193,18 +251,13 @@ namespace System.Net.Security
                         }
                         finally
                         {
-                            for (int i = 0; i < found.Count; i++)
+                            for (int i = 0; i < certs.Count; i++)
                             {
-                                X509Certificate2 toDispose = found[i];
+                                X509Certificate2 toDispose = certs[i];
                                 if (!ReferenceEquals(toDispose, cert))
                                 {
                                     toDispose.Dispose();
                                 }
-                            }
-
-                            for (int i = 0; i < certs.Count; i++)
-                            {
-                                certs[i].Dispose();
                             }
                         }
                     }
@@ -223,7 +276,7 @@ namespace System.Net.Security
 
         private static X509Certificate2? MakeEx(X509Certificate certificate)
         {
-            Debug.Assert(certificate != null, "certificate != null");
+            Debug.Assert(certificate != null);
 
             if (certificate.GetType() == typeof(X509Certificate2))
             {
@@ -543,7 +596,7 @@ namespace System.Net.Security
                 //
                 // SECURITY: selectedCert ref if not null is a safe object that does not depend on possible **user** inherited X509Certificate type.
                 //
-                byte[]? guessedThumbPrint = selectedCert?.GetCertHash();
+                byte[]? guessedThumbPrint = selectedCert?.GetCertHash(HashAlgorithmName.SHA512);
                 SafeFreeCredentials? cachedCredentialHandle = SslSessionsCache.TryCachedCredential(
                     guessedThumbPrint,
                     _sslAuthenticationOptions.EnabledSslProtocols,
@@ -632,7 +685,7 @@ namespace System.Net.Security
                 if (localCertificate == null)
                 {
                     if (NetEventSource.Log.IsEnabled())
-                        NetEventSource.Error(this, $"ServerCertSelectionDelegate returned no certificaete for '{_sslAuthenticationOptions.TargetHost}'.");
+                        NetEventSource.Error(this, $"ServerCertSelectionDelegate returned no certificate for '{_sslAuthenticationOptions.TargetHost}'.");
                     throw new AuthenticationException(SR.net_ssl_io_no_server_cert);
                 }
 
@@ -689,7 +742,7 @@ namespace System.Net.Security
             //
             // Note selectedCert is a safe ref possibly cloned from the user passed Cert object
             //
-            byte[] guessedThumbPrint = selectedCert.GetCertHash();
+            byte[] guessedThumbPrint = selectedCert.GetCertHash(HashAlgorithmName.SHA512);
             bool sendTrustedList = _sslAuthenticationOptions.CertificateContext!.Trust?._sendTrustInHandshake ?? false;
             SafeFreeCredentials? cachedCredentialHandle = SslSessionsCache.TryCachedCredential(guessedThumbPrint,
                                                                 _sslAuthenticationOptions.EnabledSslProtocols,
@@ -760,13 +813,9 @@ namespace System.Net.Security
         }
 
         //
-        internal void NextMessage(ReadOnlySpan<byte> incomingBuffer, out ProtocolToken token)
+        internal ProtocolToken NextMessage(ReadOnlySpan<byte> incomingBuffer, out int consumed)
         {
-            byte[]? nextmsg = null;
-            token.Status = GenerateToken(incomingBuffer, ref nextmsg);
-            token.Size = nextmsg?.Length ?? 0;
-            token.Payload = nextmsg;
-
+            ProtocolToken token = GenerateToken(incomingBuffer, out consumed);
             if (NetEventSource.Log.IsEnabled())
             {
                 if (token.Failed)
@@ -774,6 +823,8 @@ namespace System.Net.Security
                     NetEventSource.Error(this, $"Authentication failed. Status: {token.Status}, Exception message: {token.GetException()!.Message}");
                 }
             }
+
+            return token;
         }
 
         /*++
@@ -786,18 +837,17 @@ namespace System.Net.Security
 
             Input:
                 input  - bytes from the wire
-                output - ref to byte [], what we will send to the
-                    server in response
             Return:
-                status - error information
+                token - ProtocolToken with status and optionally buffer.
         --*/
-        private SecurityStatusPal GenerateToken(ReadOnlySpan<byte> inputBuffer, ref byte[]? output)
+        private ProtocolToken GenerateToken(ReadOnlySpan<byte> inputBuffer, out int consumed)
         {
-            byte[]? result = Array.Empty<byte>();
-            SecurityStatusPal status = default;
             bool cachedCreds = false;
             bool sendTrustList = false;
             byte[]? thumbPrint = null;
+
+            ProtocolToken token = default;
+            token.RentBuffer = true;
 
             // We need to try get credentials at the beginning.
             // _credentialsHandle may be always null on some platforms but
@@ -817,36 +867,33 @@ namespace System.Net.Security
                         cachedCreds = _sslAuthenticationOptions.IsServer
                                         ? AcquireServerCredentials(ref thumbPrint)
                                         : AcquireClientCredentials(ref thumbPrint);
-
-                        if (cachedCreds && _sslAuthenticationOptions.IsServer)
-                        {
-                            sendTrustList = _sslAuthenticationOptions.CertificateContext?.Trust?._sendTrustInHandshake ?? false;
-                        }
                     }
 
                     if (_sslAuthenticationOptions.IsServer)
                     {
-                        status = SslStreamPal.AcceptSecurityContext(
+                        sendTrustList = _sslAuthenticationOptions.CertificateContext?.Trust?._sendTrustInHandshake ?? false;
+
+                        token = SslStreamPal.AcceptSecurityContext(
                                       ref _credentialsHandle!,
                                       ref _securityContext,
                                       inputBuffer,
-                                      ref result,
+                                      out consumed,
                                       _sslAuthenticationOptions);
-                        if (status.ErrorCode == SecurityStatusPalErrorCode.HandshakeStarted)
+                        if (token.Status.ErrorCode == SecurityStatusPalErrorCode.HandshakeStarted)
                         {
-                            status = SslStreamPal.SelectApplicationProtocol(
+                            token.Status = SslStreamPal.SelectApplicationProtocol(
                                         _credentialsHandle!,
                                         _securityContext!,
                                         _sslAuthenticationOptions,
                                         _lastFrame.RawApplicationProtocols);
 
-                            if (status.ErrorCode == SecurityStatusPalErrorCode.OK)
+                            if (token.Status.ErrorCode == SecurityStatusPalErrorCode.OK)
                             {
-                                status = SslStreamPal.AcceptSecurityContext(
+                                token = SslStreamPal.AcceptSecurityContext(
                                         ref _credentialsHandle!,
                                         ref _securityContext,
                                         ReadOnlySpan<byte>.Empty,
-                                        ref result,
+                                        out _,
                                         _sslAuthenticationOptions);
                             }
                         }
@@ -854,15 +901,15 @@ namespace System.Net.Security
                     else
                     {
                         string hostName = TargetHostNameHelper.NormalizeHostName(_sslAuthenticationOptions.TargetHost);
-                        status = SslStreamPal.InitializeSecurityContext(
+                        token = SslStreamPal.InitializeSecurityContext(
                                        ref _credentialsHandle!,
                                        ref _securityContext,
                                        hostName,
                                        inputBuffer,
-                                       ref result,
+                                       out consumed,
                                        _sslAuthenticationOptions);
 
-                        if (status.ErrorCode == SecurityStatusPalErrorCode.CredentialsNeeded)
+                        if (token.Status.ErrorCode == SecurityStatusPalErrorCode.CredentialsNeeded)
                         {
                             refreshCredentialNeeded = true;
                             cachedCreds = AcquireClientCredentials(ref thumbPrint, newCredentialsRequested: true);
@@ -870,12 +917,12 @@ namespace System.Net.Security
                             if (NetEventSource.Log.IsEnabled())
                                 NetEventSource.Info(this, "InitializeSecurityContext() returned 'CredentialsNeeded'.");
 
-                            status = SslStreamPal.InitializeSecurityContext(
+                            token = SslStreamPal.InitializeSecurityContext(
                                        ref _credentialsHandle!,
                                        ref _securityContext,
                                        hostName,
                                        ReadOnlySpan<byte>.Empty,
-                                       ref result,
+                                       out _,
                                        _sslAuthenticationOptions);
                         }
                     }
@@ -910,20 +957,17 @@ namespace System.Net.Security
                 }
             }
 
-            output = result;
-
-            return status;
+            return token;
         }
 
-        internal SecurityStatusPal Renegotiate(out byte[]? output)
+        internal ProtocolToken Renegotiate()
         {
             Debug.Assert(_securityContext != null);
 
             return SslStreamPal.Renegotiate(
                                       ref _credentialsHandle!,
                                       ref _securityContext,
-                                      _sslAuthenticationOptions,
-                                      out output);
+                                      _sslAuthenticationOptions);
         }
 
         /*++
@@ -939,8 +983,8 @@ namespace System.Net.Security
 
             _headerSize = streamSizes.Header;
             _trailerSize = streamSizes.Trailer;
-            _maxDataSize = checked(streamSizes.MaximumMessage - (_headerSize + _trailerSize));
-            Debug.Assert(_maxDataSize > 0, "_maxDataSize > 0");
+            _maxDataSize = streamSizes.MaximumMessage;
+            Debug.Assert(_maxDataSize > 0);
 
             SslStreamPal.QueryContextConnectionInfo(_securityContext!, ref _connectionInfo);
 #if DEBUG
@@ -953,42 +997,22 @@ namespace System.Net.Security
 #endif
         }
 
-        /*++
-            Encrypt - Encrypts our bytes before we send them over the wire
-
-            PERF: make more efficient, this does an extra copy when the offset
-            is non-zero.
-
-            Input:
-                buffer - bytes for sending
-                offset -
-                size   -
-                output - Encrypted bytes
-        --*/
-        internal SecurityStatusPal Encrypt(ReadOnlyMemory<byte> buffer, ref byte[] output, out int resultSize)
+        internal ProtocolToken Encrypt(ReadOnlyMemory<byte> buffer)
         {
             if (NetEventSource.Log.IsEnabled()) NetEventSource.DumpBuffer(this, buffer.Span);
 
-            byte[] writeBuffer = output;
-
-            SecurityStatusPal secStatus = SslStreamPal.EncryptMessage(
+            ProtocolToken token = SslStreamPal.EncryptMessage(
                 _securityContext!,
                 buffer,
                 _headerSize,
-                _trailerSize,
-                ref writeBuffer,
-                out resultSize);
+                _trailerSize);
 
-            if (secStatus.ErrorCode != SecurityStatusPalErrorCode.OK)
+            if (token.Status.ErrorCode != SecurityStatusPalErrorCode.OK)
             {
-                if (NetEventSource.Log.IsEnabled()) NetEventSource.Error(this, $"ERROR {secStatus}");
-            }
-            else
-            {
-                output = writeBuffer;
+                if (NetEventSource.Log.IsEnabled()) NetEventSource.Error(this, $"ERROR {token.Status}");
             }
 
-            return secStatus;
+            return token;
         }
 
         internal SecurityStatusPal Decrypt(Span<byte> buffer, out int outputOffset, out int outputCount)
@@ -1032,8 +1056,9 @@ namespace System.Net.Security
                     return true;
                 }
 
-                _remoteCertificate = certificate;
-                if (_remoteCertificate == null)
+                // don't assign to _remoteCertificate yet, this prevents weird exceptions if SslStream is disposed in parallel with X509Chain building
+
+                if (certificate == null)
                 {
                     if (NetEventSource.Log.IsEnabled() && RemoteCertRequired) NetEventSource.Error(this, $"Remote certificate required, but no remote certificate received");
                     sslPolicyErrors |= SslPolicyErrors.RemoteCertificateNotAvailable;
@@ -1075,15 +1100,17 @@ namespace System.Net.Security
                     sslPolicyErrors |= CertificateValidationPal.VerifyCertificateProperties(
                         _securityContext!,
                         chain,
-                        _remoteCertificate,
+                        certificate,
                         _sslAuthenticationOptions.CheckCertName,
                         _sslAuthenticationOptions.IsServer,
                         TargetHostNameHelper.NormalizeHostName(_sslAuthenticationOptions.TargetHost));
                 }
 
+                _remoteCertificate = certificate;
+
                 if (remoteCertValidationCallback != null)
                 {
-                    success = remoteCertValidationCallback(this, _remoteCertificate, chain, sslPolicyErrors);
+                    success = remoteCertValidationCallback(this, certificate, chain, sslPolicyErrors);
                 }
                 else
                 {
@@ -1168,12 +1195,11 @@ namespace System.Net.Security
                 }
             }
 
-            GenerateAlertToken(ref alertToken);
+            alertToken = GenerateAlertToken();
         }
 
-        private byte[]? CreateShutdownToken()
+        private ProtocolToken CreateShutdownToken()
         {
-            byte[]? nextmsg = null;
             SecurityStatusPal status;
             status = SslStreamPal.ApplyShutdownToken(_securityContext!);
 
@@ -1187,24 +1213,15 @@ namespace System.Net.Security
                     ExceptionDispatchInfo.Throw(status.Exception);
                 }
 
-                return null;
+                return default;
             }
 
-            GenerateToken(default, ref nextmsg);
-
-            return nextmsg;
+            return GenerateToken(default, out _);
         }
 
-        private void GenerateAlertToken(ref ProtocolToken alertToken)
+        private ProtocolToken GenerateAlertToken()
         {
-            byte[]? nextmsg = null;
-
-            SecurityStatusPal status;
-            status = GenerateToken(default, ref nextmsg);
-
-            alertToken.Payload = nextmsg;
-            alertToken.Size = nextmsg?.Length ?? 0;
-            alertToken.Status = status;
+            return GenerateToken(default, out _);
         }
 
         private static TlsAlertMessage GetAlertMessageFromChain(X509Chain chain)
@@ -1312,6 +1329,7 @@ namespace System.Net.Security
         internal SecurityStatusPal Status;
         internal byte[]? Payload;
         internal int Size;
+        internal bool RentBuffer;
 
         internal bool Failed
         {
@@ -1344,12 +1362,54 @@ namespace System.Net.Security
                 return (Status.ErrorCode == SecurityStatusPalErrorCode.ContextExpired);
             }
         }
-
-        internal ProtocolToken(byte[]? data, SecurityStatusPal status)
+        internal void SetPayload(ReadOnlySpan<byte> payload)
         {
-            Status = status;
-            Payload = data;
-            Size = data != null ? data.Length : 0;
+            Debug.Assert(Payload == null);
+            Size = payload.Length;
+
+            if (Size > 0)
+            {
+                Payload = RentBuffer ? ArrayPool<byte>.Shared.Rent(Size) : new byte[Size];
+                payload.CopyTo(new Span<byte>(Payload, 0, Size));
+            }
+        }
+
+        internal void EnsureAvailableSpace(int size)
+        {
+            if (Available >= size)
+            {
+                return;
+            }
+
+            var oldPayload = Payload;
+
+            Payload = RentBuffer ? ArrayPool<byte>.Shared.Rent(Size + size) : new byte[Size + size];
+            if (oldPayload != null)
+            {
+                oldPayload.AsSpan<byte>().CopyTo(Payload);
+                if (RentBuffer)
+                {
+                    ArrayPool<byte>.Shared.Return(oldPayload);
+                }
+            }
+        }
+
+        internal int Available => Payload == null ? 0 : Payload.Length - Size;
+        internal Span<byte> AvailableSpan => Payload == null ? Span<byte>.Empty : new Span<byte>(Payload, Size, Available);
+
+        internal ReadOnlyMemory<byte> AsMemory() => new ReadOnlyMemory<byte>(Payload, 0, Size);
+
+        internal void ReleasePayload()
+        {
+            Debug.Assert(Payload != null || Size == 0);
+
+            byte[]? toReturn = Payload;
+            Payload = null;
+            Size = 0;
+            if (RentBuffer && toReturn != null)
+            {
+                ArrayPool<byte>.Shared.Return(toReturn);
+            }
         }
 
         internal Exception? GetException()

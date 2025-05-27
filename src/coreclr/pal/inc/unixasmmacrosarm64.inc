@@ -17,9 +17,32 @@
 .endm
 
 .macro PATCH_LABEL Name
+#if defined(__APPLE__)
+        .alt_entry C_FUNC(\Name)
+        .private_extern C_FUNC(\Name)
+#else
         .global C_FUNC(\Name)
+#endif
 C_FUNC(\Name):
 .endm
+
+.macro ALTERNATE_ENTRY Name
+#if defined(__APPLE__)
+        .alt_entry C_FUNC(\Name)
+        .private_extern C_FUNC(\Name)
+#else
+        .global C_FUNC(\Name)
+        .hidden C_FUNC(\Name)
+#endif
+C_FUNC(\Name):
+.endm
+
+// On MacOS, local labels cannot be used in arithmetic expressions.
+#if defined(__APPLE__)
+#define FIXUP_LABEL(name) name
+#else
+#define FIXUP_LABEL(name) .L##name
+#endif
 
 .macro LEAF_ENTRY Name, Section
         .global C_FUNC(\Name)
@@ -98,6 +121,13 @@ C_FUNC(\Name\()_End):
         .endif
 .endm
 
+.macro PROLOG_SAVE_REG_PAIR_NO_FP_INDEXED reg1, reg2, ofs
+        stp \reg1, \reg2, [sp, \ofs]!
+        .cfi_adjust_cfa_offset -\ofs
+        .cfi_rel_offset \reg1, 0
+        .cfi_rel_offset \reg2, 8
+.endm
+
 .macro EPILOG_RESTORE_REG reg, ofs
         ldr \reg, [sp, \ofs]
         .cfi_restore \reg
@@ -121,7 +151,7 @@ C_FUNC(\Name\()_End):
 .endm
 
 .macro EMIT_BREAKPOINT
-        brk #0
+        brk #0xf000
 .endm
 
 //-----------------------------------------------------------------------------
@@ -206,7 +236,7 @@ C_FUNC(\Name\()_End):
 // base address to be passed in $reg
 //
 
-// Reserve 64 bytes of memory before calling  SAVE_ARGUMENT_REGISTERS
+// Reserve 72 bytes of memory before calling  SAVE_ARGUMENT_REGISTERS
 .macro SAVE_ARGUMENT_REGISTERS reg, ofs
 
         str                    x8, [\reg, #(\ofs)]

@@ -4,7 +4,7 @@
 namespace System.Threading.Channels
 {
     /// <summary>Provides static methods for creating channels.</summary>
-    public static class Channel
+    public static partial class Channel
     {
         /// <summary>Creates an unbounded channel usable by any number of readers and writers concurrently.</summary>
         /// <returns>The created channel.</returns>
@@ -17,10 +17,7 @@ namespace System.Threading.Channels
         /// <returns>The created channel.</returns>
         public static Channel<T> CreateUnbounded<T>(UnboundedChannelOptions options)
         {
-            if (options is null)
-            {
-                throw new ArgumentNullException(nameof(options));
-            }
+            ArgumentNullException.ThrowIfNull(options);
 
             if (options.SingleReader)
             {
@@ -64,10 +61,7 @@ namespace System.Threading.Channels
         /// <returns>The created channel.</returns>
         public static Channel<T> CreateBounded<T>(BoundedChannelOptions options, Action<T>? itemDropped)
         {
-            if (options is null)
-            {
-                throw new ArgumentNullException(nameof(options));
-            }
+            ArgumentNullException.ThrowIfNull(options);
 
             return new BoundedChannel<T>(options.Capacity, options.FullMode, !options.AllowSynchronousContinuations, itemDropped);
         }

@@ -2877,6 +2877,19 @@ mono_arch_output_basic_block (MonoCompile *cfg, MonoBasicBlock *bb)
 			}
 			break;
 		}
+		case OP_X86_LDIVREM:
+		case OP_X86_LDIVREMU:
+		case OP_X86_LDIVREM2:
+			g_assert_not_reached ();
+			break;
+		case OP_X86_IDIVREM:
+		case OP_X86_IDIVREMU:
+			x86_div_reg (code, ins->sreg3, ins->opcode==OP_X86_IDIVREM);
+			break;
+		case OP_X86_IDIVREM2:
+			if (ins->dreg != X86_EDX) 
+				x86_mov_reg_reg (code, ins->dreg, X86_EDX);
+			break;
 		case OP_IOR:
 			x86_alu_reg_reg (code, X86_OR, ins->sreg1, ins->sreg2);
 			break;
@@ -3308,6 +3321,12 @@ mono_arch_output_basic_block (MonoCompile *cfg, MonoBasicBlock *bb)
 			break;
 		case OP_X86_XCHG:
 			x86_xchg_reg_reg (code, ins->sreg1, ins->sreg2, 4);
+			break;
+		case OP_X86_BSF32:
+			x86_bsf (code, ins->dreg, ins->sreg1);
+			break;
+		case OP_X86_BSR32:
+			x86_bsr (code, ins->dreg, ins->sreg1);
 			break;
 		case OP_LOCALLOC:
 			/* keep alignment */
@@ -4893,12 +4912,12 @@ mono_arch_output_basic_block (MonoCompile *cfg, MonoBasicBlock *bb)
 			code = emit_get_last_error (code, ins->dreg);
 			break;
 		default:
-			g_warning ("unknown opcode %s\n", mono_inst_name (ins->opcode));
+			g_warning ("unknown opcode " M_PRI_INST "\n", mono_inst_name (ins->opcode));
 			g_assert_not_reached ();
 		}
 
 		if (G_UNLIKELY ((code - cfg->native_code - offset) > GINT_TO_UINT(max_len))) {
-			g_warning ("wrong maximal instruction length of instruction %s (expected %d, got %d)",
+			g_warning ("wrong maximal instruction length of instruction " M_PRI_INST " (expected %d, got %d)",
 					   mono_inst_name (ins->opcode), max_len, code - cfg->native_code - offset);
 			g_assert_not_reached ();
 		}

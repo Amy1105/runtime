@@ -739,7 +739,7 @@ namespace System.Net.Mail
             CancellationTokenRegistration ctr = default;
 
             // Indicates whether the CTR has been set - captured in handler
-            int state = 0;
+            bool ctrSet = false;
 
             // Register a handler that will transfer completion results to the TCS Task
             SendCompletedEventHandler? handler = null;
@@ -750,7 +750,7 @@ namespace System.Net.Mail
                     try
                     {
                         ((SmtpClient)sender).SendCompleted -= handler;
-                        if (Interlocked.Exchange(ref state, 1) != 0)
+                        if (Interlocked.Exchange(ref ctrSet, true))
                         {
                             // A CTR has been set, we have to wait until it completes before completing the task
                             ctr.Dispose();
@@ -783,7 +783,7 @@ namespace System.Net.Mail
                 ((SmtpClient)s!).SendAsyncCancel();
             }, this);
 
-            if (Interlocked.Exchange(ref state, 1) != 0)
+            if (Interlocked.Exchange(ref ctrSet, true))
             {
                 // SendCompleted was already invoked, ensure the CTR completes before returning the task
                 ctr.Dispose();
@@ -892,7 +892,7 @@ namespace System.Net.Mail
         {
             try
             {
-                _message!.EndSend(result);
+                MailMessage.EndSend(result);
                 // If some recipients failed but not others, throw AFTER sending the message.
                 Complete(_failedRecipientException, result.AsyncState!);
             }
@@ -929,8 +929,7 @@ namespace System.Net.Mail
                 }
                 else
                 {
-                    _message!.BeginSend(_writer,
-                        IsUnicodeSupported(), new AsyncCallback(SendMessageCallback), result.AsyncState!);
+                    _message!.BeginSend(_writer, DeliveryMethod != SmtpDeliveryMethod.Network, IsUnicodeSupported(), new AsyncCallback(SendMessageCallback), result.AsyncState!);
                 }
             }
             catch (Exception e)

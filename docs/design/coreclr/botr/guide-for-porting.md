@@ -181,7 +181,7 @@ both the JIT and VM.
 
 2.  Architecture specific relocation information (to represent generation of
     relocations for use by load, store, jmp and call instructions) See
-    <https://docs.microsoft.com/en-us/windows/win32/debug/pe-format#coff-relocations-object-only>
+    <https://learn.microsoft.com/windows/win32/debug/pe-format#coff-relocations-object-only>
     for the sort of details that need to be defined.
 
 3.  Behavior and accessibility of processor single step features from within a
@@ -386,19 +386,17 @@ Here is an annotated list of the stubs implemented for Unix on Arm64.
         application
 
     11. `CallEHFunclet` – Used to call catch, finally and fault funclets. Behavior
-        is specific to exactly how funclets are implemented. Only used if
-        USE_FUNCLET_CALL_HELPER is set
+        is specific to exactly how funclets are implemented.
 
     12. `CallEHFilterFunclet` – Used to call filter funclets. Behavior is specific
-        to exactly how funclets are implemented. Only used if
-        USE_FUNCLET_CALL_HELPER is set
+        to exactly how funclets are implemented.
 
     13. `ResolveWorkerChainLookupAsmStub`/ `ResolveWorkerAsmStub` Used for virtual
         stub dispatch (virtual call support for interface, and some virtual
         methods). These work in tandem with the logic in virtualcallstubcpu.h to
         implement the logic described in [Virtual Stub Dispatch](virtual-stub-dispatch.md)
 
-    14. `ProfileEnter`/ `ProfileeLeave`/ `ProfileTailcall` – Used to call function
+    14. `ProfileEnter`/ `ProfileLeave`/ `ProfileTailcall` – Used to call function
         entry/exit profile functions acquired through the ICorProfiler
         interface. Used in VERY rare circumstances. It is reasonable to wait to
         implement these until the final stages of productization. Most profilers
@@ -412,12 +410,6 @@ Here is an annotated list of the stubs implemented for Unix on Arm64.
         pinvokes. It is expected that C\# 8.0 will increase use of this feature.
         Today use of this feature on Unix requires hand-written IL. On Windows
         this feature is commonly used by C++/CLI
-
-3.  EH Correctness. Some helpers are written in assembly to provide well known
-    locations for NullReferenceExceptions to be generated out of a SIGSEGV
-    signal.
-
-    1.  `JIT_MemSet`, and `JIT_MemCpy` have this requirement
 
 #### cgencpu.h
 

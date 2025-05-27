@@ -7,6 +7,7 @@ using System.Runtime.CompilerServices;
 using System.Runtime.InteropServices;
 using System.Runtime.Intrinsics;
 using System.Runtime.Intrinsics.Arm;
+using System.Runtime.Intrinsics.Wasm;
 using System.Runtime.Intrinsics.X86;
 
 namespace System.Text
@@ -188,6 +189,9 @@ namespace System.Text
         public static bool EqualsIgnoreCase(ReadOnlySpan<char> left, ReadOnlySpan<char> right)
             => left.Length == right.Length
             && EqualsIgnoreCase<ushort, ushort, PlainLoader<ushort>>(ref Unsafe.As<char, ushort>(ref MemoryMarshal.GetReference(left)), ref Unsafe.As<char, ushort>(ref MemoryMarshal.GetReference(right)), (uint)right.Length);
+
+        internal static bool EqualsIgnoreCase(ref char left, ref char right, nuint length) =>
+            EqualsIgnoreCase<ushort, ushort, PlainLoader<ushort>>(ref Unsafe.As<char, ushort>(ref left), ref Unsafe.As<char, ushort>(ref right), length);
 
         private static bool EqualsIgnoreCase<TLeft, TRight, TLoader>(ref TLeft left, ref TRight right, nuint length)
             where TLeft : unmanaged, INumberBase<TLeft>
@@ -518,6 +522,11 @@ namespace System.Text
                 {
                     Vector128<byte> vec = Vector128.CreateScalarUnsafe(Unsafe.ReadUnaligned<long>(ref ptr)).AsByte();
                     return Sse2.UnpackLow(vec, Vector128<byte>.Zero).AsUInt16();
+                }
+                else if (PackedSimd.IsSupported)
+                {
+                    Vector128<byte> vec = Vector128.CreateScalarUnsafe(Unsafe.ReadUnaligned<long>(ref ptr)).AsByte();
+                    return PackedSimd.ZeroExtendWideningLower(vec);
                 }
                 else
                 {

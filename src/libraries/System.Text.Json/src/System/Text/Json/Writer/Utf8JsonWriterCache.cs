@@ -1,6 +1,7 @@
 ﻿// Licensed to the .NET Foundation under one or more agreements.
 // The .NET Foundation licenses this file to you under the MIT license.
 
+using System.Buffers;
 using System.Diagnostics;
 
 namespace System.Text.Json
@@ -14,7 +15,10 @@ namespace System.Text.Json
         [ThreadStatic]  //表示静态字段t_threadLocalState的值对于每个线程都是唯一的。
         private static ThreadLocalState? t_threadLocalState;
 
-        public static Utf8JsonWriter RentWriterAndBuffer(JsonSerializerOptions options, out PooledByteBufferWriter bufferWriter)
+        public static Utf8JsonWriter RentWriterAndBuffer(JsonSerializerOptions options, out PooledByteBufferWriter bufferWriter) =>
+            RentWriterAndBuffer(options.GetWriterOptions(), options.DefaultBufferSize, out bufferWriter);
+
+        public static Utf8JsonWriter RentWriterAndBuffer(JsonWriterOptions options, int defaultBufferSize, out PooledByteBufferWriter bufferWriter)
         {
             ThreadLocalState state = t_threadLocalState ??= new();
             Utf8JsonWriter writer;
@@ -24,20 +28,31 @@ namespace System.Text.Json
                 //堆栈中的第一个JsonSerializer调用--初始化并返回缓存的实例。
                 bufferWriter = state.BufferWriter;
                 writer = state.Writer;
+<<<<<<< HEAD
                 bufferWriter.InitializeEmptyInstance(options.DefaultBufferSize);
                 writer.Reset(bufferWriter, options.GetWriterOptions());
+=======
+
+                bufferWriter.InitializeEmptyInstance(defaultBufferSize);
+                writer.Reset(bufferWriter, options);
+>>>>>>> be6751023bf7837fa2f58bf1f7f6e7f6507c9798
             }
             else
             {
                 // We're in a recursive JsonSerializer call -- return fresh instances.
+<<<<<<< HEAD
                 //我们正在进行一个递归JsonSerializer调用——返回新的实例。
                 bufferWriter = new PooledByteBufferWriter(options.DefaultBufferSize);
                 writer = new Utf8JsonWriter(bufferWriter, options.GetWriterOptions());
+=======
+                bufferWriter = new PooledByteBufferWriter(defaultBufferSize);
+                writer = new Utf8JsonWriter(bufferWriter, options);
+>>>>>>> be6751023bf7837fa2f58bf1f7f6e7f6507c9798
             }
             return writer;
         }
 
-        public static Utf8JsonWriter RentWriter(JsonSerializerOptions options, PooledByteBufferWriter bufferWriter)
+        public static Utf8JsonWriter RentWriter(JsonSerializerOptions options, IBufferWriter<byte> bufferWriter)
         {
             ThreadLocalState state = t_threadLocalState ??= new();
             Utf8JsonWriter writer;

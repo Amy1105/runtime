@@ -3,6 +3,7 @@
 
 using System.Collections.Generic;
 using System.ComponentModel;
+using System.Diagnostics;
 using System.DirectoryServices.ActiveDirectory;
 using System.IO;
 using System.IO.Pipes;
@@ -563,6 +564,7 @@ namespace System.Diagnostics.Tests
         }
 
         [ConditionalFact(typeof(RemoteExecutor), nameof(RemoteExecutor.IsSupported))]
+        [ActiveIssue("https://github.com/dotnet/runtime/issues/105686", typeof(PlatformDetection), nameof(PlatformDetection.IsQemuLinux))]
         public void TestMaxWorkingSet()
         {
             CreateDefaultProcess();
@@ -618,6 +620,7 @@ namespace System.Diagnostics.Tests
         }
 
         [ConditionalFact(typeof(RemoteExecutor), nameof(RemoteExecutor.IsSupported))]
+        [ActiveIssue("https://github.com/dotnet/runtime/issues/105686", typeof(PlatformDetection), nameof(PlatformDetection.IsQemuLinux))]
         public void TestMinWorkingSet()
         {
             CreateDefaultProcess();
@@ -889,20 +892,19 @@ namespace System.Diagnostics.Tests
         {
             CreateDefaultProcess();
 
-            DateTime startTime = DateTime.UtcNow;
+            Stopwatch timer = Stopwatch.StartNew();
             TimeSpan processorTimeBeforeSpin = Process.GetCurrentProcess().TotalProcessorTime;
 
             // Perform loop to occupy cpu, takes less than a second.
-            int i = int.MaxValue / 16;
+            int i = int.MaxValue / 8;
             while (i > 0)
             {
                 i--;
             }
 
             TimeSpan processorTimeAfterSpin = Process.GetCurrentProcess().TotalProcessorTime;
-            DateTime endTime = DateTime.UtcNow;
 
-            double timeDiff = (endTime - startTime).TotalMilliseconds;
+            double timeDiff = timer.Elapsed.TotalMilliseconds;
             double cpuTimeDiff = (processorTimeAfterSpin - processorTimeBeforeSpin).TotalMilliseconds;
 
             double cpuUsage = cpuTimeDiff / (timeDiff * Environment.ProcessorCount);
@@ -1288,7 +1290,7 @@ namespace System.Diagnostics.Tests
                 }
                 catch (NotEmptyException)
                 {
-                    throw new TrueException(PrintProcesses(currentProcess), false);
+                    throw TrueException.ForNonTrueValue(PrintProcesses(currentProcess), false);
                 }
 
                 Assert.All(processes, process => Assert.Equal(currentProcess.ProcessName, process.ProcessName));
@@ -2262,10 +2264,10 @@ namespace System.Diagnostics.Tests
         }
 
         [PlatformSpecific(TestPlatforms.AnyUnix)]
-        [ActiveIssue("https://github.com/dotnet/runtime/issues/29330", TestPlatforms.OSX)]
         [Fact]
         [ActiveIssue("https://github.com/dotnet/runtime/issues/52852", TestPlatforms.MacCatalyst)]
         [ActiveIssue("https://github.com/dotnet/runtime/issues/53095", TestPlatforms.Android)]
+        [ActiveIssue("https://github.com/dotnet/runtime/issues/29383", TestPlatforms.OSX)]
         public void LongProcessNamesAreSupported()
         {
             string sleepPath;
@@ -2292,6 +2294,10 @@ namespace System.Diagnostics.Tests
 
             using (Process px = Process.Start(sleepCommandPathFileName, "600"))
             {
+                // Reading of long process names is flaky during process startup and shutdown.
+                // Wait a bit to skip over the period where the ProcessName is not reliable.
+                Thread.Sleep(100);
+
                 Process[] runningProcesses = Process.GetProcesses();
                 try
                 {
@@ -2481,7 +2487,7 @@ namespace System.Diagnostics.Tests
             containingProcess.WaitForExit();
 
             if (containingProcess.ExitCode != 10)
-                Assert.True(false, "attempt to terminate a process tree containing the calling process did not throw the expected exception");
+                Assert.Fail("attempt to terminate a process tree containing the calling process did not throw the expected exception");
 
             int RunProcessAttemptingToKillEntireTreeOnParent()
             {

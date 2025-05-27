@@ -24,14 +24,6 @@ struct DacHostVtPtrs
 #undef VPTR_CLASS
 };
 
-
-const WCHAR *g_dacVtStrings[] =
-{
-#define VPTR_CLASS(name) W(#name),
-#include <vptr_list.h>
-#undef VPTR_CLASS
-};
-
 DacHostVtPtrs g_dacHostVtPtrs;
 
 HRESULT
@@ -154,7 +146,7 @@ DacReadAll(TADDR addr, PVOID buffer, ULONG32 size, bool throwEx)
     ULONG32 returned;
 
 #if defined(DAC_MEASURE_PERF)
-    unsigned __int64  nStart, nEnd;
+    uint64_t  nStart, nEnd;
     nStart = GetCycleCount();
 #endif // #if defined(DAC_MEASURE_PERF)
 
@@ -367,14 +359,6 @@ DacFreeVirtual(TADDR mem, ULONG32 size, ULONG32 typeFlags,
 PVOID
 DacInstantiateTypeByAddressHelper(TADDR addr, ULONG32 size, bool throwEx, bool fReport)
 {
-#ifdef _PREFIX_
-
-    // Dac accesses are not interesting for PREfix and cause a lot of PREfix noise
-    // so we just return the unmodified pointer for our PREFIX builds
-    return (PVOID)addr;
-
-#else // !_PREFIX_
-
     if (!g_dacImpl)
     {
         DacError(E_UNEXPECTED);
@@ -490,8 +474,6 @@ DacInstantiateTypeByAddressHelper(TADDR addr, ULONG32 size, bool throwEx, bool f
     }
 
     return inst + 1;
-
-#endif // !_PREFIX_
 }
 
 PVOID   DacInstantiateTypeByAddress(TADDR addr, ULONG32 size, bool throwEx)
@@ -508,14 +490,6 @@ PVOID   DacInstantiateTypeByAddressNoReport(TADDR addr, ULONG32 size, bool throw
 PVOID
 DacInstantiateClassByVTable(TADDR addr, ULONG32 minSize, bool throwEx)
 {
-#ifdef _PREFIX_
-
-    // Dac accesses are not interesting for PREfix and cause a lot of PREfix noise
-    // so we just return the unmodified pointer for our PREFIX builds
-    return (PVOID)addr;
-
-#else // !_PREFIX_
-
     if (!g_dacImpl)
     {
         DacError(E_UNEXPECTED);
@@ -616,9 +590,10 @@ DacInstantiateClassByVTable(TADDR addr, ULONG32 minSize, bool throwEx)
     // Sanity check that the object we're returning is big enough to fill the PTR type it's being
     // accessed with.
     // If this is not true, it means the type being marshalled isn't a sub-type (or the same type)
-    // as the PTR type it's being used as.  For example, trying to marshal an instance of a SystemDomain
-    // object into a PTR_AppDomain will cause this ASSERT to fire (because both SystemDomain and AppDomain
-    // derived from BaseDomain, and SystemDomain is smaller than AppDomain).
+    // as the PTR type it's being used as. For example, trying to marshal an AssemblyLoaderAllocator
+    // into a PTR_GlobalLoaderAllocator will cause this ASSERT to fire (because AssemblyLoaderAllocator
+    // and GlobalLoaderAllocator derived from LoaderAllocator and AssemblyLoaderAllocator is smaller
+    // than GlobalLoaderAllocator).
     _ASSERTE_MSG(size >= minSize, "DAC coding error: Attempt to instantiate a VPTR from an object that is too small");
 
     inst = g_dacImpl->m_instances.Alloc(addr, size, DAC_VPTR);
@@ -659,8 +634,6 @@ DacInstantiateClassByVTable(TADDR addr, ULONG32 minSize, bool throwEx)
         g_dacImpl->m_instances.Supersede(oldInst);
     }
     return inst + 1;
-
-#endif // !_PREFIX_
 }
 
 #define LOCAL_STR_BUF 256
@@ -668,14 +641,6 @@ DacInstantiateClassByVTable(TADDR addr, ULONG32 minSize, bool throwEx)
 PSTR
 DacInstantiateStringA(TADDR addr, ULONG32 maxChars, bool throwEx)
 {
-#ifdef _PREFIX_
-
-    // Dac accesses are not interesting for PREfix and cause a lot of PREfix noise
-    // so we just return the unmodified pointer for our PREFIX builds
-    return (PSTR)addr;
-
-#else // !_PREFIX_
-
     HRESULT status;
 
     if (!g_dacImpl)
@@ -793,21 +758,11 @@ DacInstantiateStringA(TADDR addr, ULONG32 maxChars, bool throwEx)
         inst->usage = DAC_STRA;
     }
     return retVal;
-
-#endif // !_PREFIX_
 }
 
 PWSTR
 DacInstantiateStringW(TADDR addr, ULONG32 maxChars, bool throwEx)
 {
-#ifdef _PREFIX_
-
-    // Dac accesses are not interesting for PREfix and cause a lot of PREfix noise
-    // so we just return the unmodified pointer for our PREFIX builds
-    return (PWSTR)addr;
-
-#else // !_PREFIX_
-
     HRESULT status;
 
     if (!g_dacImpl)
@@ -925,21 +880,11 @@ DacInstantiateStringW(TADDR addr, ULONG32 maxChars, bool throwEx)
         inst->usage = DAC_STRW;
     }
     return retVal;
-
-#endif // !_PREFIX_
 }
 
 TADDR
 DacGetTargetAddrForHostAddr(LPCVOID ptr, bool throwEx)
 {
-#ifdef _PREFIX_
-
-    // Dac accesses are not interesting for PREfix and cause a lot of PREfix noise
-    // so we just return the unmodified pointer for our PREFIX builds
-    return (TADDR) ptr;
-
-#else // !_PREFIX_
-
     // Preserve special pointer values.
     if (ptr == NULL || ((TADDR) ptr == (TADDR)-1))
     {
@@ -988,8 +933,6 @@ DacGetTargetAddrForHostAddr(LPCVOID ptr, bool throwEx)
 
         return addr;
     }
-
-#endif // !_PREFIX_
 }
 
 // Similar to DacGetTargetAddrForHostAddr above except that ptr can represent any pointer within a host data
@@ -1005,14 +948,6 @@ DacGetTargetAddrForHostInteriorAddr(LPCVOID ptr, bool throwEx)
     // will bound the amount of time it takes to report an error in the case where code has been incorrectly
     // DAC-ized.
     const DWORD kMaxSearchIterations = 100;
-
-#ifdef _PREFIX_
-
-    // Dac accesses are not interesting for PREfix and cause a lot of PREfix noise
-    // so we just return the unmodified pointer for our PREFIX builds
-    return (TADDR) ptr;
-
-#else // !_PREFIX_
 
     // Preserve special pointer values.
     if (ptr == NULL || ((TADDR) ptr == (TADDR)-1))
@@ -1130,26 +1065,6 @@ DacGetTargetAddrForHostInteriorAddr(LPCVOID ptr, bool throwEx)
 
         return addr;
     }
-#endif // !_PREFIX_
-}
-
-PWSTR    DacGetVtNameW(TADDR targetVtable)
-{
-    PWSTR pszRet = NULL;
-
-    TADDR *targ = &DacGlobalValues()->EEJitManager__vtAddr;
-    TADDR *targStart = targ;
-    for (ULONG i = 0; i < sizeof(g_dacHostVtPtrs) / sizeof(PVOID); i++)
-    {
-        if (targetVtable == (*targ))
-        {
-            pszRet = (PWSTR) *(g_dacVtStrings + (targ - targStart));
-            break;
-        }
-
-        targ++;
-    }
-    return pszRet;
 }
 
 TADDR
@@ -1386,6 +1301,15 @@ DacAllocHostOnlyInstance(ULONG32 size, bool throwEx)
     return inst + 1;
 }
 
+thread_local bool t_DacAssertsUnconditionally = false;
+
+bool DacSetEnableDacAssertsUnconditionally(bool enable)
+{
+    bool oldValue = t_DacAssertsUnconditionally;
+    t_DacAssertsUnconditionally = enable;
+    return oldValue;
+}
+
 //
 // Queries whether ASSERTs should be raised when inconsistencies in the target are detected
 //
@@ -1403,6 +1327,10 @@ bool DacTargetConsistencyAssertsEnabled()
         // the case should only be host-asserts (i.e. always bugs), and so we should just return true.
         return true;
     }
+
+    // If asserts are unconditionally enabled via the thread local, simply return true.
+    if (t_DacAssertsUnconditionally)
+        return true;
 
     return g_dacImpl->TargetConsistencyAssertsEnabled();
 }
@@ -1525,7 +1453,7 @@ HRESULT DacReplacePatchesInHostMemory(MemoryRange range, PVOID pBuffer)
     {
         CORDB_ADDRESS patchAddress = (CORDB_ADDRESS)dac_cast<TADDR>(pPatch->address);
 
-        if (patchAddress != NULL)
+        if (patchAddress != (CORDB_ADDRESS)NULL)
         {
             PRD_TYPE opcode = pPatch->opcode;
 

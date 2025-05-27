@@ -1672,6 +1672,10 @@ namespace ILCompiler.Reflection.ReadyToRun
                     builder.Append("BYREF_WRITE_BARRIER");
                     break;
 
+                case ReadyToRunHelper.BulkWriteBarrier:
+                    builder.Append("BULK_WRITE_BARRIER");
+                    break;
+
                 // Array helpers
                 case ReadyToRunHelper.Stelem_Ref:
                     builder.Append("STELEM_REF");
@@ -1685,8 +1689,16 @@ namespace ILCompiler.Reflection.ReadyToRun
                     builder.Append("MEM_SET");
                     break;
 
+                case ReadyToRunHelper.MemZero:
+                    builder.Append("MEM_ZERO");
+                    break;
+
                 case ReadyToRunHelper.MemCpy:
                     builder.Append("MEM_CPY");
+                    break;
+
+                case ReadyToRunHelper.NativeMemSet:
+                    builder.Append("NATIVE_MEM_SET");
                     break;
 
                 // PInvoke helpers
@@ -1751,6 +1763,10 @@ namespace ILCompiler.Reflection.ReadyToRun
 
                 case ReadyToRunHelper.Unbox_Nullable:
                     builder.Append("UNBOX_NULLABLE");
+                    break;
+
+                case ReadyToRunHelper.Unbox_TypeTest:
+                    builder.Append("UNBOX_TYPETEST");
                     break;
 
                 case ReadyToRunHelper.NewMultiDimArr:
@@ -1911,6 +1927,14 @@ namespace ILCompiler.Reflection.ReadyToRun
 
                 case ReadyToRunHelper.Dbl2ULngOvf:
                     builder.Append("DBL2ULNGOVF");
+                    break;
+
+                case ReadyToRunHelper.Lng2Flt:
+                    builder.Append("LNG2FLT");
+                    break;
+
+                case ReadyToRunHelper.ULng2Flt:
+                    builder.Append("ULNG2FLT");
                     break;
 
                 // Floating point ops

@@ -30,10 +30,7 @@ namespace System.Text.Json
         [RequiresDynamicCode(SerializationRequiresDynamicCodeMessage)]
         public static TValue? Deserialize<TValue>(this JsonDocument document, JsonSerializerOptions? options = null)
         {
-            if (document is null)
-            {
-                ThrowHelper.ThrowArgumentNullException(nameof(document));
-            }
+            ArgumentNullException.ThrowIfNull(document);
 
             JsonTypeInfo<TValue> jsonTypeInfo = GetTypeInfo<TValue>(options);
             ReadOnlySpan<byte> utf8Json = document.GetRootRawValue().Span;
@@ -61,14 +58,8 @@ namespace System.Text.Json
         [RequiresDynamicCode(SerializationRequiresDynamicCodeMessage)]
         public static object? Deserialize(this JsonDocument document, Type returnType, JsonSerializerOptions? options = null)
         {
-            if (document is null)
-            {
-                ThrowHelper.ThrowArgumentNullException(nameof(document));
-            }
-            if (returnType is null)
-            {
-                ThrowHelper.ThrowArgumentNullException(nameof(returnType));
-            }
+            ArgumentNullException.ThrowIfNull(document);
+            ArgumentNullException.ThrowIfNull(returnType);
 
             JsonTypeInfo jsonTypeInfo = GetTypeInfo(options, returnType);
             ReadOnlySpan<byte> utf8Json = document.GetRootRawValue().Span;
@@ -94,14 +85,8 @@ namespace System.Text.Json
         /// </exception>
         public static TValue? Deserialize<TValue>(this JsonDocument document, JsonTypeInfo<TValue> jsonTypeInfo)
         {
-            if (document is null)
-            {
-                ThrowHelper.ThrowArgumentNullException(nameof(document));
-            }
-            if (jsonTypeInfo is null)
-            {
-                ThrowHelper.ThrowArgumentNullException(nameof(jsonTypeInfo));
-            }
+            ArgumentNullException.ThrowIfNull(document);
+            ArgumentNullException.ThrowIfNull(jsonTypeInfo);
 
             jsonTypeInfo.EnsureConfigured();
             ReadOnlySpan<byte> utf8Json = document.GetRootRawValue().Span;
@@ -113,6 +98,7 @@ namespace System.Text.Json
         /// </summary>
         /// <param name="document">The <see cref="JsonDocument"/> to convert.</param>
         /// <param name="jsonTypeInfo">Metadata about the type to convert.</param>
+        /// <returns>A <paramref name="jsonTypeInfo"/> representation of the JSON value.</returns>
         /// <exception cref="System.ArgumentNullException">
         /// <paramref name="document"/> is <see langword="null"/>.
         ///
@@ -122,14 +108,8 @@ namespace System.Text.Json
         /// </exception>
         public static object? Deserialize(this JsonDocument document, JsonTypeInfo jsonTypeInfo)
         {
-            if (document is null)
-            {
-                ThrowHelper.ThrowArgumentNullException(nameof(document));
-            }
-            if (jsonTypeInfo is null)
-            {
-                ThrowHelper.ThrowArgumentNullException(nameof(jsonTypeInfo));
-            }
+            ArgumentNullException.ThrowIfNull(document);
+            ArgumentNullException.ThrowIfNull(jsonTypeInfo);
 
             jsonTypeInfo.EnsureConfigured();
             ReadOnlySpan<byte> utf8Json = document.GetRootRawValue().Span;
@@ -174,18 +154,9 @@ namespace System.Text.Json
         /// </exception>
         public static object? Deserialize(this JsonDocument document, Type returnType, JsonSerializerContext context)
         {
-            if (document is null)
-            {
-                ThrowHelper.ThrowArgumentNullException(nameof(document));
-            }
-            if (returnType is null)
-            {
-                ThrowHelper.ThrowArgumentNullException(nameof(returnType));
-            }
-            if (context is null)
-            {
-                ThrowHelper.ThrowArgumentNullException(nameof(context));
-            }
+            ArgumentNullException.ThrowIfNull(document);
+            ArgumentNullException.ThrowIfNull(returnType);
+            ArgumentNullException.ThrowIfNull(context);
 
             JsonTypeInfo jsonTypeInfo = GetTypeInfo(context, returnType);
             ReadOnlySpan<byte> utf8Json = document.GetRootRawValue().Span;

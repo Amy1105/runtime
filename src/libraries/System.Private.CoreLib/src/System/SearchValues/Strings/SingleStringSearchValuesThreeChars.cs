@@ -1,6 +1,7 @@
 ﻿// Licensed to the .NET Foundation under one or more agreements.
 // The .NET Foundation licenses this file to you under the MIT license.
 
+using System.Collections.Generic;
 using System.Diagnostics;
 using System.Numerics;
 using System.Runtime.CompilerServices;
@@ -13,13 +14,14 @@ namespace System.Buffers
     // Based on SpanHelpers.IndexOf(ref char, int, ref char, int)
     // This implementation uses 3 precomputed anchor points when searching.
     // This implementation may also be used for length=2 values, in which case two anchors point at the same position.
-    // Has an O(i * m) worst-case, with the expected time closer to O(n) for most inputs.
-    internal sealed class SingleStringSearchValuesThreeChars<TCaseSensitivity> : SearchValues<string>
+    // Has an O(i * m) worst-case, with the expected time closer to O(i) for most inputs.
+    internal sealed class SingleStringSearchValuesThreeChars<TValueLength, TCaseSensitivity> : StringSearchValuesBase
+        where TValueLength : struct, IValueLength
         where TCaseSensitivity : struct, ICaseSensitivity
     {
         private const ushort CaseConversionMask = unchecked((ushort)~0x20);
 
-        private readonly string _value;
+        private readonly SingleValueState _valueState;
         private readonly nint _minusValueTailLength;
         private readonly nuint _ch2ByteOffset;
         private readonly nuint _ch3ByteOffset;
@@ -29,7 +31,19 @@ namespace System.Buffers
 
         private static bool IgnoreCase => typeof(TCaseSensitivity) != typeof(CaseSensitive);
 
-        public SingleStringSearchValuesThreeChars(string value)
+        // If the value is short (ValueLengthLessThan4 => 2 or 3 characters), the anchors already represent the whole value.
+        // With case-sensitive comparisons, we've therefore already confirmed the match.
+        // With case-insensitive comparisons, we've applied the CaseConversionMask to the input, so while the anchors likely matched, we can't be sure.
+        // An exception to that is if we know the value is composed of only ASCII letters, in which case masking the input can't produce false positives.
+        private static bool CanSkipAnchorMatchVerification
+        {
+            [MethodImpl(MethodImplOptions.AggressiveInlining)]
+            get =>
+                typeof(TValueLength) == typeof(ValueLengthLessThan4) &&
+                (typeof(TCaseSensitivity) == typeof(CaseSensitive) || typeof(TCaseSensitivity) == typeof(CaseInsensitiveAsciiLetters));
+        }
+
+        public SingleStringSearchValuesThreeChars(HashSet<string>? uniqueValues, string value) : base(uniqueValues)
         {
             // We could have more than one entry in 'uniqueValues' if this value is an exact prefix of all the others.
             Debug.Assert(value.Length > 1);
@@ -38,7 +52,7 @@ namespace System.Buffers
 
             Debug.Assert(ch3Offset == 0 || ch3Offset > ch2Offset);
 
-            _value = value;
+            _valueState = new SingleValueState(value, IgnoreCase);
             _minusValueTailLength = -(value.Length - 1);
 
             _ch1 = value[0];
@@ -218,8 +232,7 @@ namespace System.Buffers
             }
 
         ShortInput:
-            string value = _value;
-            char valueHead = value.GetRawStringData();
+            char valueHead = _valueState.Value.GetRawStringData();
 
             for (nint i = 0; i < searchSpaceMinusValueTailLength; i++)
             {
@@ -227,7 +240,7 @@ namespace System.Buffers
 
                 // CaseInsensitiveUnicode doesn't support single-character transformations, so we skip checking the first character first.
                 if ((typeof(TCaseSensitivity) == typeof(CaseInsensitiveUnicode) || TCaseSensitivity.TransformInput(cur) == valueHead) &&
-                    TCaseSensitivity.Equals(ref cur, value))
+                    TCaseSensitivity.Equals<TValueLength>(ref cur, in _valueState))
                 {
                     return (int)i;
                 }
@@ -322,9 +335,9 @@ namespace System.Buffers
 
                 ref char matchRef = ref Unsafe.AddByteOffset(ref searchSpace, bitPos);
 
-                ValidateReadPosition(ref searchSpaceStart, searchSpaceLength, ref matchRef, _value.Length);
+                ValidateReadPosition(ref searchSpaceStart, searchSpaceLength, ref matchRef, _valueState.Value.Length);
 
-                if (TCaseSensitivity.Equals(ref matchRef, _value))
+                if (CanSkipAnchorMatchVerification || TCaseSensitivity.Equals<TValueLength>(ref matchRef, in _valueState))
                 {
                     offsetFromStart = (int)((nuint)Unsafe.ByteOffset(ref searchSpaceStart, ref matchRef) / 2);
                     return true;
@@ -350,9 +363,9 @@ namespace System.Buffers
 
                 ref char matchRef = ref Unsafe.AddByteOffset(ref searchSpace, bitPos);
 
-                ValidateReadPosition(ref searchSpaceStart, searchSpaceLength, ref matchRef, _value.Length);
+                ValidateReadPosition(ref searchSpaceStart, searchSpaceLength, ref matchRef, _valueState.Value.Length);
 
-                if (TCaseSensitivity.Equals(ref matchRef, _value))
+                if (CanSkipAnchorMatchVerification || TCaseSensitivity.Equals<TValueLength>(ref matchRef, in _valueState))
                 {
                     offsetFromStart = (int)((nuint)Unsafe.ByteOffset(ref searchSpaceStart, ref matchRef) / 2);
                     return true;
@@ -367,50 +380,12 @@ namespace System.Buffers
         }
 
 
-        internal override bool ContainsCore(string value) =>
-            _value.Equals(value, IgnoreCase ? StringComparison.OrdinalIgnoreCase : StringComparison.Ordinal);
+        internal override bool ContainsCore(string value) => HasUniqueValues
+            ? base.ContainsCore(value)
+            : _valueState.Value.Equals(value, IgnoreCase ? StringComparison.OrdinalIgnoreCase : StringComparison.Ordinal);
 
-        internal override string[] GetValues() =>
-            new string[] { _value };
-
-        internal override int IndexOfAny(ReadOnlySpan<string> span) =>
-            IndexOfAny<IndexOfAnyAsciiSearcher.DontNegate>(span);
-
-        internal override int IndexOfAnyExcept(ReadOnlySpan<string> span) =>
-            IndexOfAny<IndexOfAnyAsciiSearcher.Negate>(span);
-
-        internal override int LastIndexOfAny(ReadOnlySpan<string> span) =>
-            LastIndexOfAny<IndexOfAnyAsciiSearcher.DontNegate>(span);
-
-        internal override int LastIndexOfAnyExcept(ReadOnlySpan<string> span) =>
-            LastIndexOfAny<IndexOfAnyAsciiSearcher.Negate>(span);
-
-        private int IndexOfAny<TNegator>(ReadOnlySpan<string> span)
-            where TNegator : struct, IndexOfAnyAsciiSearcher.INegator
-        {
-            for (int i = 0; i < span.Length; i++)
-            {
-                if (TNegator.NegateIfNeeded(ContainsCore(span[i])))
-                {
-                    return i;
-                }
-            }
-
-            return -1;
-        }
-
-        private int LastIndexOfAny<TNegator>(ReadOnlySpan<string> span)
-            where TNegator : struct, IndexOfAnyAsciiSearcher.INegator
-        {
-            for (int i = span.Length - 1; i >= 0; i--)
-            {
-                if (TNegator.NegateIfNeeded(ContainsCore(span[i])))
-                {
-                    return i;
-                }
-            }
-
-            return -1;
-        }
+        internal override string[] GetValues() => HasUniqueValues
+            ? base.GetValues()
+            : [_valueState.Value];
     }
 }

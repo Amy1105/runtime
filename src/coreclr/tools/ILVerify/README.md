@@ -2,7 +2,7 @@
 
 ## Intention of this project:
 
-The goal is to create a standalone, cross platform, open-source tool that is capable of verifying MSIL code based on [ECMA-335](https://www.ecma-international.org/publications/standards/Ecma-335.htm).
+The goal is to create a standalone, cross platform, open-source tool that is capable of verifying MSIL code based on [ECMA-335](https://www.ecma-international.org/publications-and-standards/standards/ecma-335).
 
 The main users of this tool are people working on software that emits MSIL code. These are typically compiler and profiler writers.
 
@@ -17,7 +17,7 @@ dotnet tool install --global dotnet-ilverify
 Example of use:
 
 ```
-C:\test>dotnet ilverify hello.dll -r "c:\Program Files\dotnet\shared\Microsoft.NETCore.App\2.1.12\*.dll"
+C:\test>ilverify hello.dll -r "c:\Program Files\dotnet\shared\Microsoft.NETCore.App\2.1.12\*.dll"
 All Classes and Methods in C:\test\hello.dll Verified.
 ```
 
@@ -48,10 +48,15 @@ The test project itself is under [src/tests/ilverify](../../../tests/ilverify)
 
 General instructions to build this library can be found [here](https://github.com/dotnet/runtime/blob/main/docs/workflow/testing/coreclr/testing.md).
 
-As the test project is marked with priority=1, simply building the test projects from the root of the project is not enough. For the initial build of priority=1 in release mode, run the following:
+As quick snippet which should be enough to build CoreCLR
+```
+./build.cmd -s clr+libs -c release
+```
 
-```sh
-src/tests/build.(cmd/sh) release -priority=1
+As the test project is marked with priority=1, simply building the test projects from the root of the project is not enough. Run the following to build ilverify tests:
+
+```shell
+src/tests/build.(cmd/sh) release tree ilverify
 ```
 
 It is important to not attempt to build the test project using `dotnet build` or `dotnet test`, as this will invalidate the state of the build and requires a full rebuild of both (see this [issue](https://github.com/dotnet/runtime/issues/43967)).
@@ -59,13 +64,18 @@ It is important to not attempt to build the test project using `dotnet build` or
 To incrementally build the ILVerify tests in isolation, run the following:
 
 ```sh
-dotnet.(cmd/sh) msbuild ./src/tests/ilverify/ILVerification.Tests.csproj /p:Configuration=Release
+dotnet.(cmd/sh) msbuild ./src/tests/ilverify/ILVerificationTests.csproj /p:Configuration=Release
 ```
 
 In order to run the tests, execute:
 
+on Linux
 ```sh
-artifacts/tests/coreclr/(windows/linux).x64.Release/ilverify/ILVerification.Tests.(cmd/sh) -coreroot=artifacts/tests/coreclr/(windows/linux).x64.Release/Tests/Core_Root
+artifacts/tests/coreclr/linux.x64.Release/ilverify/ILVerificationTests.sh -coreroot=<repo_root>artifacts/tests/coreclr/linux.x64.Release/Tests/Core_Root
+```
+on Windows
+```shell
+artifacts\tests\coreclr\windows.x64.Release\ilverify\ILVerificationTests.cmd -coreroot=<repo_root>artifacts\tests\coreclr\windows.x64.Release\Tests\Core_Root
 ```
 
 
@@ -121,5 +131,5 @@ All ILVerify issues are labeled with [area-Tools-ILVerification](https://github.
 Useful sources:
  - [PEVerify source code](https://github.com/lewischeng-ms/sscli/blob/master/clr/src/jit64/newverify.cpp)
  - [RyuJIT source code](https://github.com/dotnet/runtime/tree/main/src/coreclr/jit), specifically: [exception handling specific part](https://github.com/dotnet/runtime/blob/main/src/coreclr/jit/jiteh.cpp), [importer.cpp](https://github.com/dotnet/runtime/blob/main/src/coreclr/jit/importer.cpp) (look for `Compiler::ver`, `Verify`, `VerifyOrReturn`, and `VerifyOrReturnSpeculative`), [_typeinfo.h](https://github.com/dotnet/runtime/blob/main/src/coreclr/jit/_typeinfo.h), [typeinfo.cpp](https://github.com/dotnet/runtime/blob/main/src/coreclr/jit/typeinfo.cpp)
- - [ECMA-335 standard](https://www.ecma-international.org/publications/standards/Ecma-335.htm)
+ - [ECMA-335 standard](https://www.ecma-international.org/publications-and-standards/standards/ecma-335)
  - [Expert .NET 2.0 IL Assembler book](http://www.apress.com/us/book/9781590596463) by Serge Lidin

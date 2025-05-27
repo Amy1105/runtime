@@ -39,7 +39,7 @@ bool compare_by_name_and_version(const framework_info &a, const framework_info &
     std::vector<framework_info>* framework_infos)
 {
     std::vector<pal::string_t> hive_dir;
-    get_framework_and_sdk_locations(own_dir, disable_multilevel_lookup, &hive_dir);
+    get_framework_locations(own_dir, disable_multilevel_lookup, &hive_dir);
 
     int32_t hive_depth = 0;
 
@@ -73,6 +73,7 @@ bool compare_by_name_and_version(const framework_info &a, const framework_info &
 
             trace::verbose(_X("Gathering FX locations in [%s]"), fx_dir.c_str());
 
+            const pal::string_t deps_file_name = fx_name_local + _X(".deps.json");
             std::vector<pal::string_t> versions;
             pal::readdir_onlydirectories(fx_dir, &versions);
             for (const pal::string_t& ver : versions)
@@ -85,7 +86,7 @@ bool compare_by_name_and_version(const framework_info &a, const framework_info &
                 // Check that the framework's .deps.json exists.
                 pal::string_t fx_version_dir = fx_dir;
                 append_path(&fx_version_dir, ver.c_str());
-                if (!library_exists_in_dir(fx_version_dir, fx_name_local + _X(".deps.json"), nullptr))
+                if (!file_exists_in_dir(fx_version_dir, deps_file_name.c_str(), nullptr))
                 {
                     trace::verbose(_X("Ignoring FX version [%s] without .deps.json"), ver.c_str());
                     continue;

@@ -173,6 +173,7 @@ namespace System.Reflection
         internal RuntimeType GetRuntimeType() { return m_declaringType; }
         internal RuntimeModule GetRuntimeModule() { return RuntimeTypeHandle.GetModule(m_declaringType); }
         internal RuntimeAssembly GetRuntimeAssembly() { return GetRuntimeModule().GetRuntimeAssembly(); }
+        public override bool IsCollectible => m_declaringType.IsCollectible;
         #endregion
 
         #region MethodBase Overrides
@@ -180,20 +181,11 @@ namespace System.Reflection
         // This seems to always returns System.Void.
         internal override Type GetReturnType() { return Signature.ReturnType; }
 
-        internal override ParameterInfo[] GetParametersNoCopy() =>
+        internal override ReadOnlySpan<ParameterInfo> GetParametersAsSpan() =>
             m_parameters ??= RuntimeParameterInfo.GetParameters(this, this, Signature);
 
-        public override ParameterInfo[] GetParameters()
-        {
-            ParameterInfo[] parameters = GetParametersNoCopy();
-
-            if (parameters.Length == 0)
-                return parameters;
-
-            ParameterInfo[] ret = new ParameterInfo[parameters.Length];
-            Array.Copy(parameters, ret, parameters.Length);
-            return ret;
-        }
+        public override ParameterInfo[] GetParameters() =>
+            GetParametersAsSpan().ToArray();
 
         public override MethodImplAttributes GetMethodImplementationFlags()
         {

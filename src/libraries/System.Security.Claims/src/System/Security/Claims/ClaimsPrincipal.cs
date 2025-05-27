@@ -15,7 +15,6 @@ namespace System.Security.Claims
     /// Concrete IPrincipal supporting multiple claims-based identities
     /// </summary>
     [DebuggerDisplay("{DebuggerToString(),nq}")]
-    [DebuggerTypeProxy(typeof(ClaimsPrincipalDebugProxy))]
     public class ClaimsPrincipal : IPrincipal
     {
         private enum SerializationMask
@@ -29,7 +28,7 @@ namespace System.Security.Claims
         private readonly byte[]? _userSerializationData;
 
         private static Func<IEnumerable<ClaimsIdentity>, ClaimsIdentity?> s_identitySelector = SelectPrimaryIdentity;
-        private static Func<ClaimsPrincipal> s_principalSelector = ClaimsPrincipalSelector;
+        private static Func<ClaimsPrincipal?>? s_principalSelector;
 
         private static ClaimsPrincipal? SelectClaimsPrincipal()
         {
@@ -75,26 +74,14 @@ namespace System.Security.Claims
 
         public static Func<IEnumerable<ClaimsIdentity>, ClaimsIdentity?> PrimaryIdentitySelector
         {
-            get
-            {
-                return s_identitySelector;
-            }
-            set
-            {
-                s_identitySelector = value;
-            }
+            get => s_identitySelector;
+            set => s_identitySelector = value;
         }
 
-        public static Func<ClaimsPrincipal> ClaimsPrincipalSelector
+        public static Func<ClaimsPrincipal?>? ClaimsPrincipalSelector
         {
-            get
-            {
-                return s_principalSelector;
-            }
-            set
-            {
-                s_principalSelector = value;
-            }
+            get => s_principalSelector;
+            set => s_principalSelector = value;
         }
 
         /// <summary>
@@ -593,21 +580,6 @@ namespace System.Security.Claims
             }
 
             return $"Identities = {identitiesCount}, Claims = {claimsCount}";
-        }
-
-        private sealed class ClaimsPrincipalDebugProxy
-        {
-            private readonly ClaimsPrincipal _principal;
-
-            public ClaimsPrincipalDebugProxy(ClaimsPrincipal principal)
-            {
-                _principal = principal;
-            }
-
-            // List type has a friendly debugger view
-            public List<Claim> Claims => new List<Claim>(_principal.Claims);
-            public List<ClaimsIdentity> Identities => new List<ClaimsIdentity>(_principal.Identities);
-            public IIdentity? Identity => _principal.Identity;
         }
     }
 }

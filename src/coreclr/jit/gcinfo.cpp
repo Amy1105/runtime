@@ -46,7 +46,8 @@ XXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXX
 XXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXX
 */
 
-GCInfo::GCInfo(Compiler* theCompiler) : compiler(theCompiler)
+GCInfo::GCInfo(Compiler* theCompiler)
+    : compiler(theCompiler)
 {
     regSet         = nullptr;
     gcVarPtrList   = nullptr;
@@ -239,32 +240,30 @@ GCInfo::WriteBarrierForm GCInfo::gcIsWriteBarrierCandidate(GenTreeStoreInd* stor
         return WBF_NoBarrier;
     }
 
-    // Ignore any assignments of NULL.
-    GenTree* data = store->Data()->gtSkipReloadOrCopy();
-    if ((data->GetVN(VNK_Liberal) == ValueNumStore::VNForNull()) || data->IsIntegralConst(0))
+    // Ignore any assignments of NULL or nongc object
+    GenTree* const value = store->Data()->gtSkipReloadOrCopy();
+    if (value->IsIntegralConst(0) || value->IsIconHandle(GTF_ICON_OBJ_HDL))
     {
         return WBF_NoBarrier;
     }
 
     if ((store->gtFlags & GTF_IND_TGT_NOT_HEAP) != 0)
     {
-        // This indirection is not from to the heap.
-        // This case occurs for stack-allocated objects.
+        // This indirection is known to not store to the heap.
         return WBF_NoBarrier;
     }
 
-    // Write-barriers are no-op for frozen objects (as values)
-    if (data->IsIconHandle(GTF_ICON_OBJ_HDL))
+    if ((store->gtFlags & GTF_IND_TGT_HEAP) != 0)
     {
-        // Ignore frozen objects
-        return WBF_NoBarrier;
+        // This indirection is known to store to the heap.
+        return WBF_BarrierUnchecked;
     }
 
     WriteBarrierForm wbf = gcWriteBarrierFormFromTargetAddress(store->Addr());
 
     if (wbf == WBF_BarrierUnknown)
     {
-        wbf = ((store->gtFlags & GTF_IND_TGT_HEAP) != 0) ? WBF_BarrierUnchecked : WBF_BarrierChecked;
+        wbf = WBF_BarrierChecked;
     }
 
     return wbf;
@@ -420,12 +419,33 @@ GCInfo::regPtrDsc* GCInfo::gcRegPtrAllocDsc()
 
 #ifdef JIT32_GCENCODER
 
+// Small helper class to handle the No-GC-Interrupt callbacks
+// when reporting interruptible ranges.
+struct NoGCRegionCounter
+{
+    unsigned noGCRegionCount;
+
+    NoGCRegionCounter()
+        : noGCRegionCount(0)
+    {
+    }
+
+    // This callback is called for each insGroup marked with IGF_NOGCINTERRUPT.
+    bool operator()(unsigned igFuncIdx, unsigned igOffs, unsigned igSize, unsigned firstInstrSize, bool isInProlog)
+    {
+        noGCRegionCount++;
+        return true;
+    }
+};
+
 /*****************************************************************************
  *
  *  Compute the various counts that get stored in the info block header.
  */
 
-void GCInfo::gcCountForHeader(UNALIGNED unsigned int* pUntrackedCount, UNALIGNED unsigned int* pVarPtrTableSize)
+void GCInfo::gcCountForHeader(UNALIGNED unsigned int* pUntrackedCount,
+                              UNALIGNED unsigned int* pVarPtrTableSize,
+                              UNALIGNED unsigned int* pNoGCRegionCount)
 {
     unsigned   varNum;
     LclVarDsc* varDsc;
@@ -557,6 +577,19 @@ void GCInfo::gcCountForHeader(UNALIGNED unsigned int* pUntrackedCount, UNALIGNED
 #endif
 
     *pVarPtrTableSize = varPtrTableSize;
+
+    // Count the number of no GC regions
+
+    unsigned int noGCRegionCount = 0;
+
+    if (compiler->codeGen->GetInterruptible())
+    {
+        NoGCRegionCounter counter;
+        compiler->GetEmitter()->emitGenNoGCLst(counter, /* skipMainPrologsAndEpilogs = */ true);
+        noGCRegionCount = counter.noGCRegionCount;
+    }
+
+    *pNoGCRegionCount = noGCRegionCount;
 }
 
 //------------------------------------------------------------------------
@@ -566,7 +599,7 @@ void GCInfo::gcCountForHeader(UNALIGNED unsigned int* pUntrackedCount, UNALIGNED
 //
 // Arguments:
 //   varNum - the variable number to check;
-//   pKeepThisAlive - if !FEATURE_EH_FUNCLETS and the argument != nullptr remember
+//   pKeepThisAlive - if !UsesFunclets() and the argument != nullptr remember
 //   if `this` should be kept alive and considered tracked.
 //
 // Return value:
@@ -615,16 +648,16 @@ bool GCInfo::gcIsUntrackedLocalOrNonEnregisteredArg(unsigned varNum, bool* pKeep
         }
     }
 
-#if !defined(FEATURE_EH_FUNCLETS)
-    if (compiler->lvaIsOriginalThisArg(varNum) && compiler->lvaKeepAliveAndReportThis())
+#if defined(FEATURE_EH_WINDOWS_X86)
+    if (!compiler->UsesFunclets() && compiler->lvaIsOriginalThisArg(varNum) && compiler->lvaKeepAliveAndReportThis())
     {
         // "this" is in the untracked variable area, but encoding of untracked variables does not support reporting
         // "this". So report it as a tracked variable with a liveness extending over the entire method.
         //
         // TODO-x86-Cleanup: the semantic here is not clear, it would be useful to check different cases and
         // add a description where "this" is saved and how it is tracked in each of them:
-        // 1) when FEATURE_EH_FUNCLETS defined (x86 Linux);
-        // 2) when FEATURE_EH_FUNCLETS not defined, lvaKeepAliveAndReportThis == true, compJmpOpUsed == true;
+        // 1) when UsesFunclets() == true (x86 Linux);
+        // 2) when UsesFunclets() == false, lvaKeepAliveAndReportThis == true, compJmpOpUsed == true;
         // 3) when there is regPtrDsc for "this", but keepThisAlive == true;
         // etc.
 
@@ -634,7 +667,7 @@ bool GCInfo::gcIsUntrackedLocalOrNonEnregisteredArg(unsigned varNum, bool* pKeep
         }
         return false;
     }
-#endif // !FEATURE_EH_FUNCLETS
+#endif // FEATURE_EH_WINDOWS_X86
     return true;
 }
 

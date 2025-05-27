@@ -210,11 +210,11 @@ namespace System.Xml.XslCompiledTransformApiTests
             {
                 _output.WriteLine("Expected Exception : {0}", _expectedErrorCode);
                 _output.WriteLine("Actual Exception : {0}", handler.res);
-                Assert.True(false);
+                Assert.Fail();
             }
             if (!result)
             {
-                Assert.True(false);
+                Assert.Fail();
             }
             return;
         }
@@ -227,7 +227,7 @@ namespace System.Xml.XslCompiledTransformApiTests
             CExceptionHandler handler = new CExceptionHandler(Path.Combine(_strPath, "Exceptions.xml"), assembly, _output);
             if (!handler.VerifyException(ex, res, strParams))
             {
-                Assert.True(false);
+                Assert.Fail();
             }
             return;
         }
@@ -468,7 +468,7 @@ namespace System.Xml.XslCompiledTransformApiTests
             baseline = FullFilePath(baseline);
 
             XmlDiff.XmlDiff diff = new XmlDiff.XmlDiff();
-            diff.Option = XmlDiffOption.IgnoreEmptyElement | XmlDiffOption.IgnoreAttributeOrder | XmlDiffOption.InfosetComparison | XmlDiffOption.IgnoreWhitespace | XmlDiffOption.NormalizeNewline;
+            diff.Option = XmlDiffOption.IgnoreEmptyElement | XmlDiffOption.IgnoreAttributeOrder | XmlDiffOption.InfosetComparison | XmlDiffOption.IgnoreWhitespace | XmlDiffOption.NormalizeNewline | XmlDiffOption.NormalizeSpaces;
             XmlParserContext context = new XmlParserContext(new NameTable(), null, "", XmlSpace.None);
 
             fsExpected = new FileStream(baseline, FileMode.Open, FileAccess.Read, FileShare.Read);
@@ -505,7 +505,7 @@ namespace System.Xml.XslCompiledTransformApiTests
                     _output.WriteLine(output);
                 }
 
-                using (StreamWriter sw = new StreamWriter(new FileStream("diff.xml", FileMode.Open, FileAccess.Read)))
+                using (StreamWriter sw = new StreamWriter(new FileStream("diff.xml", FileMode.Create, FileAccess.Write)))
                 {
                     sw.WriteLine("<?xml-stylesheet href='diff.xsl' type='text/xsl'?>");
                     sw.WriteLine(diff.ToXml());

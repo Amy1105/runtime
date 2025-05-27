@@ -17,7 +17,6 @@
 #include <conio.h>
 #include <assert.h>
 
-#include <mono/metadata/coree.h>
 #include <mono/metadata/assembly.h>
 #include <mono/metadata/loader.h>
 #include <mono/metadata/tabledefs.h>
@@ -252,6 +251,12 @@ MONO_SIG_HANDLER_SIGNATURE (mono_chain_signal)
 	return TRUE;
 }
 
+void
+mono_chain_signal_to_default_sigsegv_handler (void)
+{
+	g_error ("mono_chain_signal_to_default_sigsegv_handler not supported on Windows");
+}
+
 #if !HAVE_EXTERN_DEFINED_NATIVE_CRASH_HANDLER
 #ifndef MONO_CROSS_COMPILE
 void
@@ -455,8 +460,6 @@ mono_win32_runtime_tls_callback (HMODULE module_handle, DWORD reason, LPVOID res
 		mono_install_runtime_load (mini_init);
 		break;
 	case DLL_PROCESS_DETACH:
-		if (coree_module_handle)
-			FreeLibrary (coree_module_handle);
 		break;
 	case DLL_THREAD_DETACH:
 		mono_thread_info_detach ();

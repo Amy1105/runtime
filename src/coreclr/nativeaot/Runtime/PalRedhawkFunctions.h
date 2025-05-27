@@ -13,22 +13,10 @@ inline UInt32_BOOL PalCloseHandle(HANDLE arg1)
     return CloseHandle(arg1);
 }
 
-extern "C" UInt32_BOOL __stdcall CreateDirectoryW(LPCWSTR, LPSECURITY_ATTRIBUTES);
-inline UInt32_BOOL PalCreateDirectoryW(LPCWSTR arg1, LPSECURITY_ATTRIBUTES arg2)
-{
-    return CreateDirectoryW(arg1, arg2);
-}
-
 extern "C" void __stdcall DeleteCriticalSection(CRITICAL_SECTION *);
 inline void PalDeleteCriticalSection(CRITICAL_SECTION * arg1)
 {
     DeleteCriticalSection(arg1);
-}
-
-extern "C" UInt32_BOOL __stdcall DuplicateHandle(HANDLE, HANDLE, HANDLE, HANDLE *, uint32_t, UInt32_BOOL, uint32_t);
-inline UInt32_BOOL PalDuplicateHandle(HANDLE arg1, HANDLE arg2, HANDLE arg3, HANDLE * arg4, uint32_t arg5, UInt32_BOOL arg6, uint32_t arg7)
-{
-    return DuplicateHandle(arg1, arg2, arg3, arg4, arg5, arg6, arg7);
 }
 
 extern "C" void __stdcall EnterCriticalSection(CRITICAL_SECTION *);
@@ -43,22 +31,10 @@ inline void PalFlushProcessWriteBuffers()
     FlushProcessWriteBuffers();
 }
 
-extern "C" HANDLE __stdcall GetCurrentProcess();
-inline HANDLE PalGetCurrentProcess()
-{
-    return GetCurrentProcess();
-}
-
 extern "C" uint32_t __stdcall GetCurrentProcessId();
 inline uint32_t PalGetCurrentProcessId()
 {
     return GetCurrentProcessId();
-}
-
-extern "C" HANDLE __stdcall GetCurrentThread();
-inline HANDLE PalGetCurrentThread()
-{
-    return GetCurrentThread();
 }
 
 #ifdef UNICODE
@@ -77,40 +53,16 @@ inline uint32_t PalGetEnvironmentVariable(_In_opt_ LPCSTR lpName, _Out_writes_to
 }
 #endif
 
-extern "C" void * __stdcall GetProcAddress(HANDLE, const char *);
-inline void * PalGetProcAddress(HANDLE arg1, const char * arg2)
-{
-    return GetProcAddress(arg1, arg2);
-}
-
 extern "C" UInt32_BOOL __stdcall InitializeCriticalSectionEx(CRITICAL_SECTION *, uint32_t, uint32_t);
 inline UInt32_BOOL PalInitializeCriticalSectionEx(CRITICAL_SECTION * arg1, uint32_t arg2, uint32_t arg3)
 {
     return InitializeCriticalSectionEx(arg1, arg2, arg3);
 }
 
-extern "C" UInt32_BOOL __stdcall IsDebuggerPresent();
-inline UInt32_BOOL PalIsDebuggerPresent()
-{
-    return IsDebuggerPresent();
-}
-
 extern "C" void __stdcall LeaveCriticalSection(CRITICAL_SECTION *);
 inline void PalLeaveCriticalSection(CRITICAL_SECTION * arg1)
 {
     LeaveCriticalSection(arg1);
-}
-
-extern "C" HANDLE __stdcall LoadLibraryExW(const WCHAR *, HANDLE, uint32_t);
-inline HANDLE PalLoadLibraryExW(const WCHAR * arg1, HANDLE arg2, uint32_t arg3)
-{
-    return LoadLibraryExW(arg1, arg2, arg3);
-}
-
-extern "C" void __stdcall RaiseException(uint32_t, uint32_t, uint32_t, const uint32_t *);
-inline void PalRaiseException(uint32_t arg1, uint32_t arg2, uint32_t arg3, const uint32_t * arg4)
-{
-    RaiseException(arg1, arg2, arg3, arg4);
 }
 
 extern "C" UInt32_BOOL __stdcall ResetEvent(HANDLE);

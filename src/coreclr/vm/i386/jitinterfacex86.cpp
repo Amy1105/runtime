@@ -44,7 +44,7 @@ public:
         MP_ALLOCATOR = 0x1,
         SIZE_IN_EAX  = 0x2,
         OBJ_ARRAY    = 0x4,
-        ALIGN8       = 0x8,     // insert a dummy object to insure 8 byte alignment (until the next GC)
+        ALIGN8       = 0x8,     // insert a dummy object to ensure 8 byte alignment (until the next GC)
         ALIGN8OBJ    = 0x10,
     };
 
@@ -96,51 +96,7 @@ extern "C" void STDCALL WriteBarrierAssert(BYTE* ptr, Object* obj)
 
 #endif // _DEBUG
 
-#ifndef TARGET_UNIX
-
-HCIMPL1_V(INT32, JIT_Dbl2IntOvf, double val)
-{
-    FCALL_CONTRACT;
-
-    INT64 ret = HCCALL1_V(JIT_Dbl2Lng, val);
-
-    if (ret != (INT32) ret)
-        goto THROW;
-
-    return (INT32) ret;
-
-THROW:
-    FCThrow(kOverflowException);
-}
-HCIMPLEND
-#endif // TARGET_UNIX
-
-
-FCDECL1(Object*, JIT_New, CORINFO_CLASS_HANDLE typeHnd_);
-
-
-HCIMPL1(Object*, AllocObjectWrapper, MethodTable *pMT)
-{
-    CONTRACTL
-    {
-        FCALL_CHECK;
-    }
-    CONTRACTL_END;
-
-    OBJECTREF newObj = NULL;
-    HELPER_METHOD_FRAME_BEGIN_RET_0();    // Set up a frame
-    newObj = AllocateObject(pMT);
-    HELPER_METHOD_FRAME_END();
-    return OBJECTREFToObject(newObj);
-}
-HCIMPLEND
-
 /*********************************************************************/
-#ifndef UNIX_X86_ABI
-extern "C" void* g_TailCallFrameVptr;
-void* g_TailCallFrameVptr;
-#endif // !UNI_X86_ABI
-
 #ifdef FEATURE_HIJACK
 extern "C" void STDCALL JIT_TailCallHelper(Thread * pThread);
 void STDCALL JIT_TailCallHelper(Thread * pThread)
@@ -250,15 +206,15 @@ void JIT_TrialAlloc::EmitCore(CPUSTUBLINKER *psl, CodeLabel *noLock, CodeLabel *
                  && "EAX should contain size for allocation and it doesnt!!!");
 
         // Fetch current thread into EDX, preserving EAX and ECX
-        psl->X86EmitCurrentThreadFetch(kEDX, (1 << kEAX) | (1 << kECX));
+        psl->X86EmitCurrentThreadAllocContextFetch(kEDX, (1 << kEAX) | (1 << kECX));
 
         // Try the allocation.
 
 
         if (flags & (ALIGN8 | SIZE_IN_EAX | ALIGN8OBJ))
         {
-            // MOV EBX, [edx]Thread.m_alloc_context.alloc_ptr
-            psl->X86EmitOffsetModRM(0x8B, kEBX, kEDX, offsetof(Thread, m_alloc_context) + offsetof(gc_alloc_context, alloc_ptr));
+            // MOV EBX, [edx]alloc_context.m_GCAllocContext.alloc_ptr
+            psl->X86EmitOffsetModRM(0x8B, kEBX, kEDX, ee_alloc_context::getAllocPtrFieldOffset());
             // add EAX, EBX
             psl->Emit16(0xC303);
             if (flags & ALIGN8)
@@ -266,20 +222,20 @@ void JIT_TrialAlloc::EmitCore(CPUSTUBLINKER *psl, CodeLabel *noLock, CodeLabel *
         }
         else
         {
-            // add             eax, [edx]Thread.m_alloc_context.alloc_ptr
-            psl->X86EmitOffsetModRM(0x03, kEAX, kEDX, offsetof(Thread, m_alloc_context) + offsetof(gc_alloc_context, alloc_ptr));
+            // add             eax, [edx]alloc_context.m_GCAllocContext.alloc_ptr
+            psl->X86EmitOffsetModRM(0x03, kEAX, kEDX, ee_alloc_context::getAllocPtrFieldOffset());
         }
 
-        // cmp             eax, [edx]Thread.m_alloc_context.alloc_limit
-        psl->X86EmitOffsetModRM(0x3b, kEAX, kEDX, offsetof(Thread, m_alloc_context) + offsetof(gc_alloc_context, alloc_limit));
+        // cmp             eax, [edx]alloc_context.m_CombinedLimit
+        psl->X86EmitOffsetModRM(0x3b, kEAX, kEDX, ee_alloc_context::getCombinedLimitFieldOffset());
 
         // ja              noAlloc
         psl->X86EmitCondJump(noAlloc, X86CondCode::kJA);
 
         // Fill in the allocation and get out.
 
-        // mov             [edx]Thread.m_alloc_context.alloc_ptr, eax
-        psl->X86EmitIndexRegStore(kEDX, offsetof(Thread, m_alloc_context) + offsetof(gc_alloc_context, alloc_ptr), kEAX);
+        // mov             [edx]alloc_context.m_GCAllocContext.alloc_ptr, eax
+        psl->X86EmitIndexRegStore(kEDX, ee_alloc_context::getAllocPtrFieldOffset(), kEAX);
 
         if (flags & (ALIGN8 | SIZE_IN_EAX | ALIGN8OBJ))
         {
@@ -321,9 +277,9 @@ void JIT_TrialAlloc::EmitCore(CPUSTUBLINKER *psl, CodeLabel *noLock, CodeLabel *
             psl->X86EmitIndexRegLoad(kEDX, kECX, offsetof(MethodTable, m_BaseSize));
         }
 
-        // mov             eax, dword ptr [g_global_alloc_context]
+        // mov             eax, dword ptr [g_global_alloc_context.m_GCAllocContext.alloc_ptr]
         psl->Emit8(0xA1);
-        psl->Emit32((int)(size_t)&g_global_alloc_context);
+        psl->Emit32((int)(size_t)&g_global_alloc_context + ee_alloc_context::getAllocPtrFieldOffset());
 
         // Try the allocation.
         // add             edx, eax
@@ -332,17 +288,17 @@ void JIT_TrialAlloc::EmitCore(CPUSTUBLINKER *psl, CodeLabel *noLock, CodeLabel *
         if (flags & (ALIGN8 | ALIGN8OBJ))
             EmitAlignmentRoundup(psl, kEAX, kEDX, flags);      // bump up EDX size by 12 if EAX unaligned (so that we are aligned)
 
-        // cmp             edx, dword ptr [g_global_alloc_context+4]
+        // cmp             edx, dword ptr [g_global_alloc_context.m_CombinedLimit]
         psl->Emit16(0x153b);
-        psl->Emit32((int)(size_t)&g_global_alloc_context + 4);
+        psl->Emit32((int)(size_t)&g_global_alloc_context + ee_alloc_context::getCombinedLimitFieldOffset());
 
         // ja              noAlloc
         psl->X86EmitCondJump(noAlloc, X86CondCode::kJA);
 
         // Fill in the allocation and get out.
-        // mov             dword ptr [g_global_alloc_context], edx
+        // mov             dword ptr [g_global_alloc_context.m_GCAllocContext.alloc_ptr], edx
         psl->Emit16(0x1589);
-        psl->Emit32((int)(size_t)&g_global_alloc_context);
+        psl->Emit32((int)(size_t)&g_global_alloc_context + ee_alloc_context::getAllocPtrFieldOffset());
 
         if (flags & (ALIGN8 | ALIGN8OBJ))
             EmitDummyObject(psl, kEAX, flags);
@@ -381,6 +337,8 @@ void JIT_TrialAlloc::EmitNoAllocCode(CPUSTUBLINKER *psl, Flags flags)
     }
 }
 
+FCDECL1(Object*, JIT_New, CORINFO_CLASS_HANDLE typeHnd_);
+
 void *JIT_TrialAlloc::GenAllocSFast(Flags flags)
 {
     STANDARD_VM_CONTRACT;
@@ -408,139 +366,7 @@ void *JIT_TrialAlloc::GenAllocSFast(Flags flags)
     // Jump to the framed helper
     sl.X86EmitNearJump(sl.NewExternalCodeLabel((LPVOID)JIT_New));
 
-    Stub *pStub = sl.Link(SystemDomain::GetGlobalLoaderAllocator()->GetExecutableHeap());
-
-    return (void *)pStub->GetEntryPoint();
-}
-
-
-void *JIT_TrialAlloc::GenBox(Flags flags)
-{
-    STANDARD_VM_CONTRACT;
-
-    CPUSTUBLINKER sl;
-
-    CodeLabel *noLock  = sl.NewCodeLabel();
-    CodeLabel *noAlloc = sl.NewCodeLabel();
-    CodeLabel *nullRef = sl.NewCodeLabel();
-
-    // Save address of value to be boxed
-    sl.X86EmitPushReg(kEBX);
-    sl.Emit16(0xda8b);
-
-    // Check for null ref
-    // test edx, edx
-    sl.X86EmitR2ROp(0x85, kEDX, kEDX);
-
-    // je nullRef
-    sl.X86EmitCondJump(nullRef, X86CondCode::kJE);
-
-    // Emit the main body of the trial allocator
-    EmitCore(&sl, noLock, noAlloc, flags);
-
-    // Here we are at the end of the success case
-
-    // Check whether the object contains pointers
-    // test [ecx]MethodTable.m_dwFlags,MethodTable::enum_flag_ContainsPointers
-    sl.X86EmitOffsetModRM(0xf7, (X86Reg)0x0, kECX, offsetof(MethodTable, m_dwFlags));
-    sl.Emit32(MethodTable::enum_flag_ContainsPointers);
-
-    CodeLabel *pointerLabel = sl.NewCodeLabel();
-
-    // jne              pointerLabel
-    sl.X86EmitCondJump(pointerLabel, X86CondCode::kJNE);
-
-    // We have no pointers - emit a simple inline copy loop
-
-    // mov             ecx, [ecx]MethodTable.m_BaseSize
-    sl.X86EmitOffsetModRM(0x8b, kECX, kECX, offsetof(MethodTable, m_BaseSize));
-
-    // sub ecx,12
-    sl.X86EmitSubReg(kECX, 12);
-
-    CodeLabel *loopLabel = sl.NewCodeLabel();
-
-    sl.EmitLabel(loopLabel);
-
-    // mov edx,[ebx+ecx]
-    sl.X86EmitOp(0x8b, kEDX, kEBX, 0, kECX, 1);
-
-    // mov [eax+ecx+4],edx
-    sl.X86EmitOp(0x89, kEDX, kEAX, 4, kECX, 1);
-
-    // sub ecx,4
-    sl.X86EmitSubReg(kECX, 4);
-
-    // jg loopLabel
-    sl.X86EmitCondJump(loopLabel, X86CondCode::kJGE);
-
-    sl.X86EmitPopReg(kEBX);
-
-    sl.X86EmitReturn(0);
-
-    // Arrive at this label if there are pointers in the object
-    sl.EmitLabel(pointerLabel);
-
-    // Do call to CopyValueClassUnchecked(object, data, pMT)
-
-#ifdef UNIX_X86_ABI
-#define STACK_ALIGN_PADDING 12
-    // Make pad to align esp
-    sl.X86EmitSubEsp(STACK_ALIGN_PADDING);
-#endif // UNIX_X86_ABI
-
-    // Pass pMT (still in ECX)
-    sl.X86EmitPushReg(kECX);
-
-    // Pass data (still in EBX)
-    sl.X86EmitPushReg(kEBX);
-
-    // Save the address of the object just allocated
-    // mov ebx,eax
-    sl.Emit16(0xD88B);
-
-
-    // Pass address of first user byte in the newly allocated object
-    sl.X86EmitAddReg(kEAX, 4);
-    sl.X86EmitPushReg(kEAX);
-
-    // call CopyValueClass
-    sl.X86EmitCall(sl.NewExternalCodeLabel((LPVOID) CopyValueClassUnchecked), 12);
-#ifdef UNIX_X86_ABI
-    // Make pad to align esp
-    sl.X86EmitAddEsp(STACK_ALIGN_PADDING);
-#undef STACK_ALIGN_PADDING
-#endif // UNIX_X86_ABI
-
-    // Restore the address of the newly allocated object and return it.
-    // mov eax,ebx
-    sl.Emit16(0xC38B);
-
-    sl.X86EmitPopReg(kEBX);
-
-    sl.X86EmitReturn(0);
-
-    // Come here in case of no space or null ref
-    sl.EmitLabel(noAlloc);
-    sl.EmitLabel(nullRef);
-
-    // Release the lock in the uniprocessor case
-    EmitNoAllocCode(&sl, flags);
-
-    // Come here in case of failure to get the lock
-    sl.EmitLabel(noLock);
-
-    // Restore the address of the value to be boxed
-    // mov edx,ebx
-    sl.Emit16(0xD38B);
-
-    // pop ebx
-    sl.X86EmitPopReg(kEBX);
-
-    // Jump to the slow version of JIT_Box
-    sl.X86EmitNearJump(sl.NewExternalCodeLabel((LPVOID) JIT_Box));
-
-    Stub *pStub = sl.Link(SystemDomain::GetGlobalLoaderAllocator()->GetExecutableHeap());
+    Stub *pStub = sl.Link(SystemDomain::GetGlobalLoaderAllocator()->GetExecutableHeap(), NEWSTUB_FL_NONE, "AllocSFast");
 
     return (void *)pStub->GetEntryPoint();
 }
@@ -698,7 +524,7 @@ void *JIT_TrialAlloc::GenAllocArray(Flags flags)
     _ASSERTE(target->e.m_pExternalAddress);
     sl.X86EmitNearJump(target);
 
-    Stub *pStub = sl.Link(SystemDomain::GetGlobalLoaderAllocator()->GetExecutableHeap());
+    Stub *pStub = sl.Link(SystemDomain::GetGlobalLoaderAllocator()->GetExecutableHeap(), NEWSTUB_FL_NONE, "AllocArray");
 
     return (void *)pStub->GetEntryPoint();
 }
@@ -786,116 +612,9 @@ void *JIT_TrialAlloc::GenAllocString(Flags flags)
     CodeLabel * target = sl.NewExternalCodeLabel((LPVOID)FramedAllocateString);
     sl.X86EmitNearJump(target);
 
-    Stub *pStub = sl.Link(SystemDomain::GetGlobalLoaderAllocator()->GetExecutableHeap());
+    Stub *pStub = sl.Link(SystemDomain::GetGlobalLoaderAllocator()->GetExecutableHeap(), NEWSTUB_FL_NONE, "AllocString");
 
     return (void *)pStub->GetEntryPoint();
-}
-// For this helper,
-// If bCCtorCheck == true
-//          ECX contains the domain neutral module ID
-//          EDX contains the class domain ID, and the
-// else
-//          ECX contains the domain neutral module ID
-//          EDX is junk
-// shared static base is returned in EAX.
-
-// "init" should be the address of a routine which takes an argument of
-// the module domain ID, the class domain ID, and returns the static base pointer
-void EmitFastGetSharedStaticBase(CPUSTUBLINKER *psl, CodeLabel *init, bool bCCtorCheck, bool bGCStatic)
-{
-    STANDARD_VM_CONTRACT;
-
-    CodeLabel *DoInit = 0;
-    if (bCCtorCheck)
-    {
-        DoInit = psl->NewCodeLabel();
-    }
-
-    // mov eax, ecx
-    psl->Emit8(0x89);
-    psl->Emit8(0xc8);
-
-    if (bCCtorCheck)
-    {
-        // test [eax + edx + offsetof(DomainLocalModule, m_pDataBlob], ClassInitFlags::INITIALIZED_FLAG       // Is class inited
-        _ASSERTE(FitsInI1(ClassInitFlags::INITIALIZED_FLAG));
-        _ASSERTE(FitsInI1(DomainLocalModule::GetOffsetOfDataBlob()));
-
-        BYTE testClassInit[] = { 0xF6, 0x44, 0x10,
-            (BYTE) DomainLocalModule::GetOffsetOfDataBlob(), (BYTE)ClassInitFlags::INITIALIZED_FLAG };
-
-        psl->EmitBytes(testClassInit, sizeof(testClassInit));
-
-        // jz  init                                    // no, init it
-        psl->X86EmitCondJump(DoInit, X86CondCode::kJZ);
-    }
-
-    if (bGCStatic)
-    {
-        // Indirect to get the pointer to the first GC Static
-        psl->X86EmitIndexRegLoad(kEAX, kEAX, (__int32) DomainLocalModule::GetOffsetOfGCStaticPointer());
-    }
-
-    // ret
-    psl->X86EmitReturn(0);
-
-    if (bCCtorCheck)
-    {
-        // DoInit:
-        psl->EmitLabel(DoInit);
-
-        psl->X86EmitPushEBPframe();
-
-#ifdef UNIX_X86_ABI
-#define STACK_ALIGN_PADDING 4
-        // sub esp, STACK_ALIGN_PADDING; to align the stack
-        psl->X86EmitSubEsp(STACK_ALIGN_PADDING);
-#endif // UNIX_X86_ABI
-
-        // push edx (must be preserved)
-        psl->X86EmitPushReg(kEDX);
-
-        // call init
-        psl->X86EmitCall(init, 0);
-
-        // pop edx
-        psl->X86EmitPopReg(kEDX);
-
-#ifdef UNIX_X86_ABI
-        // add esp, STACK_ALIGN_PADDING
-        psl->X86EmitAddEsp(STACK_ALIGN_PADDING);
-#undef STACK_ALIGN_PADDING
-#endif // UNIX_X86_ABI
-
-        psl->X86EmitPopReg(kEBP);
-
-        // ret
-        psl->X86EmitReturn(0);
-    }
-
-}
-
-void *GenFastGetSharedStaticBase(bool bCheckCCtor, bool bGCStatic)
-{
-    STANDARD_VM_CONTRACT;
-
-    CPUSTUBLINKER sl;
-
-    CodeLabel *init;
-    if (bGCStatic)
-    {
-        init = sl.NewExternalCodeLabel((LPVOID)JIT_GetSharedGCStaticBase);
-    }
-    else
-    {
-        init = sl.NewExternalCodeLabel((LPVOID)JIT_GetSharedNonGCStaticBase);
-    }
-
-    EmitFastGetSharedStaticBase(&sl, init, bCheckCCtor, bGCStatic);
-
-    Stub *pStub = sl.Link(SystemDomain::GetGlobalLoaderAllocator()->GetExecutableHeap());
-
-    return (void*) pStub->GetEntryPoint();
 }
 
 #define NUM_WRITE_BARRIERS 6
@@ -929,8 +648,6 @@ static const void * const c_rgDebugWriteBarriers[NUM_WRITE_BARRIERS] = {
 };
 #endif // WRITE_BARRIER_CHECK
 
-#define DEBUG_RANDOM_BARRIER_CHECK DbgGetEXETimeStamp() % 7 == 4
-
 /*********************************************************************/
 // Initialize the part of the JIT helpers that require very little of
 // EE infrastructure to be in place.
@@ -944,7 +661,6 @@ void InitJITHelpers1()
     static const LPCWSTR pHelperNames[ETW_NUM_JIT_HELPERS] = {
                                                       W("@NewObject"),
                                                       W("@NewObjectAlign8"),
-                                                      W("@Box"),
                                                       W("@NewArray1Object"),
                                                       W("@NewArray1ValueType"),
                                                       W("@NewArray1ObjectAlign8"),
@@ -961,32 +677,6 @@ void InitJITHelpers1()
     JIT_TrialAlloc::Flags flags = GCHeapUtilities::UseThreadAllocationContexts() ?
         JIT_TrialAlloc::MP_ALLOCATOR : JIT_TrialAlloc::NORMAL;
 
-    // Get CPU features and check for SSE2 support.
-    // This code should eventually probably be moved into codeman.cpp,
-    // where we set the cpu feature flags for the JIT based on CPU type and features.
-    int cpuFeatures[4];
-    __cpuid(cpuFeatures, 1);
-
-    DWORD dwCPUFeaturesECX = cpuFeatures[2];
-    DWORD dwCPUFeaturesEDX = cpuFeatures[3];
-
-    //  If bit 26 (SSE2) is set, then we can use the SSE2 flavors
-    //  and faster x87 implementation for the P4 of Dbl2Lng.
-    if (dwCPUFeaturesEDX & (1<<26))
-    {
-        SetJitHelperFunction(CORINFO_HELP_DBL2INT, JIT_Dbl2IntSSE2);
-        if (dwCPUFeaturesECX & 1)  // check SSE3
-        {
-            SetJitHelperFunction(CORINFO_HELP_DBL2UINT, JIT_Dbl2LngSSE3);
-            SetJitHelperFunction(CORINFO_HELP_DBL2LNG, JIT_Dbl2LngSSE3);
-	}
-        else
-        {
-            SetJitHelperFunction(CORINFO_HELP_DBL2UINT, JIT_Dbl2LngP4x87);   // SSE2 only for signed
-            SetJitHelperFunction(CORINFO_HELP_DBL2LNG, JIT_Dbl2LngP4x87);
-        }
-    }
-
     if (!(TrackAllocationsEnabled()
         || LoggingOn(LF_GCALLOC, LL_INFO10)
 #ifdef _DEBUG
@@ -1001,29 +691,17 @@ void InitJITHelpers1()
         SetJitHelperFunction(CORINFO_HELP_NEWSFAST, pMethodAddresses[0]);
         pMethodAddresses[1] = JIT_TrialAlloc::GenAllocSFast((JIT_TrialAlloc::Flags)(flags|JIT_TrialAlloc::ALIGN8 | JIT_TrialAlloc::ALIGN8OBJ));
         SetJitHelperFunction(CORINFO_HELP_NEWSFAST_ALIGN8, pMethodAddresses[1]);
-        pMethodAddresses[2] = JIT_TrialAlloc::GenBox(flags);
-        SetJitHelperFunction(CORINFO_HELP_BOX, pMethodAddresses[2]);
-        pMethodAddresses[3] = JIT_TrialAlloc::GenAllocArray((JIT_TrialAlloc::Flags)(flags|JIT_TrialAlloc::OBJ_ARRAY));
-        SetJitHelperFunction(CORINFO_HELP_NEWARR_1_OBJ, pMethodAddresses[3]);
-        pMethodAddresses[4] = JIT_TrialAlloc::GenAllocArray(flags);
-        SetJitHelperFunction(CORINFO_HELP_NEWARR_1_VC, pMethodAddresses[4]);
-        pMethodAddresses[5] = JIT_TrialAlloc::GenAllocArray((JIT_TrialAlloc::Flags)(flags|JIT_TrialAlloc::ALIGN8));
-        SetJitHelperFunction(CORINFO_HELP_NEWARR_1_ALIGN8, pMethodAddresses[5]);
+        pMethodAddresses[2] = JIT_TrialAlloc::GenAllocArray((JIT_TrialAlloc::Flags)(flags|JIT_TrialAlloc::OBJ_ARRAY));
+        SetJitHelperFunction(CORINFO_HELP_NEWARR_1_OBJ, pMethodAddresses[2]);
+        pMethodAddresses[3] = JIT_TrialAlloc::GenAllocArray(flags);
+        SetJitHelperFunction(CORINFO_HELP_NEWARR_1_VC, pMethodAddresses[3]);
+        pMethodAddresses[4] = JIT_TrialAlloc::GenAllocArray((JIT_TrialAlloc::Flags)(flags|JIT_TrialAlloc::ALIGN8));
+        SetJitHelperFunction(CORINFO_HELP_NEWARR_1_ALIGN8, pMethodAddresses[4]);
 
         // If allocation logging is on, then we divert calls to FastAllocateString to an Ecall method, not this
         // generated method. Find this workaround in Ecall::Init() in ecall.cpp.
         ECall::DynamicallyAssignFCallImpl((PCODE) JIT_TrialAlloc::GenAllocString(flags), ECall::FastAllocateString);
     }
-
-    // Replace static helpers with faster assembly versions
-    pMethodAddresses[6] = GenFastGetSharedStaticBase(true, true);
-    SetJitHelperFunction(CORINFO_HELP_GETSHARED_GCSTATIC_BASE, pMethodAddresses[6]);
-    pMethodAddresses[7] = GenFastGetSharedStaticBase(true, false);
-    SetJitHelperFunction(CORINFO_HELP_GETSHARED_NONGCSTATIC_BASE, pMethodAddresses[7]);
-    pMethodAddresses[8] = GenFastGetSharedStaticBase(false, true);
-    SetJitHelperFunction(CORINFO_HELP_GETSHARED_GCSTATIC_BASE_NOCTOR, pMethodAddresses[8]);
-    pMethodAddresses[9] = GenFastGetSharedStaticBase(false, false);
-    SetJitHelperFunction(CORINFO_HELP_GETSHARED_NONGCSTATIC_BASE_NOCTOR, pMethodAddresses[9]);
 
     ETW::MethodLog::StubsInitialized(pMethodAddresses, (PVOID *)pHelperNames, ETW_NUM_JIT_HELPERS);
 
@@ -1033,69 +711,63 @@ void InitJITHelpers1()
     _ASSERTE_ALL_BUILDS((BYTE*)JIT_PatchedWriteBarrierGroup_End - (BYTE*)JIT_PatchedWriteBarrierGroup < (ptrdiff_t)GetOsPageSize());
 
     // Copy the write barriers to their final resting place.
-    for (int iBarrier = 0; iBarrier < NUM_WRITE_BARRIERS; iBarrier++)
+    if (IsWriteBarrierCopyEnabled())
     {
-        BYTE * pfunc = (BYTE *) JIT_WriteBarrierReg_PreGrow;
-
-        BYTE * pBuf = GetWriteBarrierCodeLocation((BYTE *)c_rgWriteBarriers[iBarrier]);
-        int reg = c_rgWriteBarrierRegs[iBarrier];
-
-        BYTE * pBufRW = pBuf;
-        ExecutableWriterHolderNoLog<BYTE> barrierWriterHolder;
-        if (IsWriteBarrierCopyEnabled())
+        for (int iBarrier = 0; iBarrier < NUM_WRITE_BARRIERS; iBarrier++)
         {
+            BYTE * pfunc = (BYTE *) JIT_WriteBarrierReg_PreGrow;
+
+            BYTE * pBuf = GetWriteBarrierCodeLocation((BYTE *)c_rgWriteBarriers[iBarrier]);
+            int reg = c_rgWriteBarrierRegs[iBarrier];
+
+            BYTE * pBufRW = pBuf;
+            ExecutableWriterHolderNoLog<BYTE> barrierWriterHolder;
             barrierWriterHolder.AssignExecutableWriterHolder(pBuf, 34);
             pBufRW = barrierWriterHolder.GetRW();
-        }
 
-        memcpy(pBufRW, pfunc, 34);
+            memcpy(pBufRW, pfunc, 34);
 
-        // assert the copied code ends in a ret to make sure we got the right length
-        _ASSERTE(pBuf[33] == 0xC3);
+            // assert the copied code ends in a ret to make sure we got the right length
+            _ASSERTE(pBuf[33] == 0xC3);
 
-        // We need to adjust registers in a couple of instructions
-        // It would be nice to have the template contain all zeroes for
-        // the register fields (corresponding to EAX), but that doesn't
-        // work because then we get a smaller encoding for the compares
-        // that only works for EAX but not the other registers.
-        // So we always have to clear the register fields before updating them.
+            // We need to adjust registers in a couple of instructions
+            // It would be nice to have the template contain all zeroes for
+            // the register fields (corresponding to EAX), but that doesn't
+            // work because then we get a smaller encoding for the compares
+            // that only works for EAX but not the other registers.
+            // So we always have to clear the register fields before updating them.
 
-        // First instruction to patch is a mov [edx], reg
+            // First instruction to patch is a mov [edx], reg
 
-        _ASSERTE(pBuf[0] == 0x89);
-        // Update the reg field (bits 3..5) of the ModR/M byte of this instruction
-        pBufRW[1] &= 0xc7;
-        pBufRW[1] |= reg << 3;
+            _ASSERTE(pBuf[0] == 0x89);
+            // Update the reg field (bits 3..5) of the ModR/M byte of this instruction
+            pBufRW[1] &= 0xc7;
+            pBufRW[1] |= reg << 3;
 
-        // Second instruction to patch is cmp reg, imm32 (low bound)
+            // Second instruction to patch is cmp reg, imm32 (low bound)
 
-        _ASSERTE(pBuf[2] == 0x81);
-        // Here the lowest three bits in ModR/M field are the register
-        pBufRW[3] &= 0xf8;
-        pBufRW[3] |= reg;
+            _ASSERTE(pBuf[2] == 0x81);
+            // Here the lowest three bits in ModR/M field are the register
+            pBufRW[3] &= 0xf8;
+            pBufRW[3] |= reg;
 
 #ifdef WRITE_BARRIER_CHECK
-        // Don't do the fancy optimization just jump to the old one
-        // Use the slow one from time to time in a debug build because
-        // there are some good asserts in the unoptimized one
-        if ((g_pConfig->GetHeapVerifyLevel() & EEConfig::HEAPVERIFY_BARRIERCHECK) || DEBUG_RANDOM_BARRIER_CHECK) {
-            pfunc = &pBufRW[0];
-            *pfunc++ = 0xE9;                // JMP c_rgDebugWriteBarriers[iBarrier]
-            *((DWORD*) pfunc) = (BYTE*) c_rgDebugWriteBarriers[iBarrier] - (&pBuf[1] + sizeof(DWORD));
-        }
+            // Don't do the fancy optimization just jump to the old one
+            // Use the slow one for write barrier checks build because it has some good asserts
+            if (g_pConfig->GetHeapVerifyLevel() & EEConfig::HEAPVERIFY_BARRIERCHECK) {
+                pfunc = &pBufRW[0];
+                *pfunc++ = 0xE9;                // JMP c_rgDebugWriteBarriers[iBarrier]
+                *((DWORD*) pfunc) = (BYTE*) c_rgDebugWriteBarriers[iBarrier] - (&pBuf[1] + sizeof(DWORD));
+            }
 #endif // WRITE_BARRIER_CHECK
-    }
+        }
 
 #ifndef CODECOVERAGE
-    ValidateWriteBarrierHelpers();
+        ValidateWriteBarrierHelpers();
 #endif
+    }
 
     // Leave the patched region writable for StompWriteBarrierEphemeral(), StompWriteBarrierResize()
-
-#ifndef UNIX_X86_ABI
-    // Initialize g_TailCallFrameVptr for JIT_TailCall helper
-    g_TailCallFrameVptr = (void*)TailCallFrame::GetMethodFrameVPtr();
-#endif // !UNIX_X86_ABI
 }
 #pragma warning (default : 4731)
 
@@ -1122,7 +794,7 @@ void ValidateWriteBarrierHelpers()
 
 #ifdef WRITE_BARRIER_CHECK
     // write barrier checking uses the slower helpers that we don't bash so there is no need for validation
-    if ((g_pConfig->GetHeapVerifyLevel() & EEConfig::HEAPVERIFY_BARRIERCHECK) || DEBUG_RANDOM_BARRIER_CHECK)
+    if (g_pConfig->GetHeapVerifyLevel() & EEConfig::HEAPVERIFY_BARRIERCHECK)
         return;
 #endif // WRITE_BARRIER_CHECK
 
@@ -1181,6 +853,12 @@ int StompWriteBarrierEphemeral(bool /* isRuntimeSuspended */)
 
     int stompWBCompleteActions = SWB_PASS;
 
+    if (!IsWriteBarrierCopyEnabled())
+    {
+        // If we didn't copy the write barriers, then don't update them.
+        return SWB_PASS;
+    }
+
 #ifdef WRITE_BARRIER_CHECK
         // Don't do the fancy optimization if we are checking write barrier
     if ((GetWriteBarrierCodeLocation((BYTE *)JIT_WriteBarrierEAX))[0] == 0xE9)  // we are using slow write barrier
@@ -1194,11 +872,8 @@ int StompWriteBarrierEphemeral(bool /* isRuntimeSuspended */)
 
         BYTE * pBufRW = pBuf;
         ExecutableWriterHolderNoLog<BYTE> barrierWriterHolder;
-        if (IsWriteBarrierCopyEnabled())
-        {
-            barrierWriterHolder.AssignExecutableWriterHolder(pBuf, 42);
-            pBufRW = barrierWriterHolder.GetRW();
-        }
+        barrierWriterHolder.AssignExecutableWriterHolder(pBuf, 42);
+        pBufRW = barrierWriterHolder.GetRW();
 
         // assert there is in fact a cmp r/m32, imm32 there
         _ASSERTE(pBuf[2] == 0x81);
@@ -1245,6 +920,12 @@ int StompWriteBarrierResize(bool isRuntimeSuspended, bool bReqUpperBoundsCheck)
 
     int stompWBCompleteActions = SWB_PASS;
 
+    if (!IsWriteBarrierCopyEnabled())
+    {
+        // If we didn't copy the write barriers, then don't update them.
+        return SWB_PASS;
+    }
+
 #ifdef WRITE_BARRIER_CHECK
         // Don't do the fancy optimization if we are checking write barrier
     if ((GetWriteBarrierCodeLocation((BYTE *)JIT_WriteBarrierEAX))[0] == 0xE9)  // we are using slow write barrier
@@ -1263,11 +944,8 @@ int StompWriteBarrierResize(bool isRuntimeSuspended, bool bReqUpperBoundsCheck)
 
         BYTE * pBufRW = pBuf;
         ExecutableWriterHolderNoLog<BYTE> barrierWriterHolder;
-        if (IsWriteBarrierCopyEnabled())
-        {
-            barrierWriterHolder.AssignExecutableWriterHolder(pBuf, 42);
-            pBufRW = barrierWriterHolder.GetRW();
-        }
+        barrierWriterHolder.AssignExecutableWriterHolder(pBuf, 42);
+        pBufRW = barrierWriterHolder.GetRW();
 
         // Check if we are still using the pre-grow version of the write barrier.
         if (bWriteBarrierIsPreGrow)

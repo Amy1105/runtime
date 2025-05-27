@@ -117,6 +117,16 @@ void RegSet::rsClearRegsModified()
 #endif // DEBUG
 
     rsModifiedRegsMask = RBM_NONE;
+
+#ifdef SWIFT_SUPPORT
+    // If this method has a SwiftError* parameter, we will return SwiftError::Value in REG_SWIFT_ERROR,
+    // so don't treat it as callee-save.
+    if (m_rsCompiler->lvaSwiftErrorArg != BAD_VAR_NUM)
+    {
+        rsAllCalleeSavedMask &= ~RBM_SWIFT_ERROR;
+        rsIntCalleeSavedMask &= ~RBM_SWIFT_ERROR;
+    }
+#endif // SWIFT_SUPPORT
 }
 
 void RegSet::rsSetRegsModified(regMaskTP mask DEBUGARG(bool suppressDump))
@@ -199,11 +209,30 @@ void RegSet::SetMaskVars(regMaskTP newMaskVars)
         }
         else
         {
-            printRegMaskInt(_rsMaskVars);
+            printRegMask(_rsMaskVars);
             m_rsCompiler->GetEmitter()->emitDispRegSet(_rsMaskVars);
+
+            // deadSet = old - new
+            regMaskTP deadSet = _rsMaskVars & ~newMaskVars;
+
+            // bornSet = new - old
+            regMaskTP bornSet = newMaskVars & ~_rsMaskVars;
+
+            if (deadSet != RBM_NONE)
+            {
+                printf(" -");
+                m_rsCompiler->GetEmitter()->emitDispRegSet(deadSet);
+            }
+
+            if (bornSet != RBM_NONE)
+            {
+                printf(" +");
+                m_rsCompiler->GetEmitter()->emitDispRegSet(bornSet);
+            }
+
             printf(" => ");
         }
-        printRegMaskInt(newMaskVars);
+        printRegMask(newMaskVars);
         m_rsCompiler->GetEmitter()->emitDispRegSet(newMaskVars);
         printf("\n");
     }
@@ -214,7 +243,9 @@ void RegSet::SetMaskVars(regMaskTP newMaskVars)
 
 /*****************************************************************************/
 
-RegSet::RegSet(Compiler* compiler, GCInfo& gcInfo) : m_rsCompiler(compiler), m_rsGCInfo(gcInfo)
+RegSet::RegSet(Compiler* compiler, GCInfo& gcInfo)
+    : m_rsCompiler(compiler)
+    , m_rsGCInfo(gcInfo)
 {
     /* Initialize the spill logic */
 
@@ -236,6 +267,11 @@ RegSet::RegSet(Compiler* compiler, GCInfo& gcInfo) : m_rsCompiler(compiler), m_r
     rsMaskPreSpillRegArg = RBM_NONE;
     rsMaskPreSpillAlign  = RBM_NONE;
 #endif
+
+#ifdef SWIFT_SUPPORT
+    rsAllCalleeSavedMask = RBM_CALLEE_SAVED;
+    rsIntCalleeSavedMask = RBM_INT_CALLEE_SAVED;
+#endif // SWIFT_SUPPORT
 
 #ifdef DEBUG
     rsModifiedRegsMaskInitialized = false;
@@ -406,9 +442,9 @@ void RegSet::rsSpillTree(regNumber reg, GenTree* tree, unsigned regIdx /* =0 */)
 
 #if defined(TARGET_X86)
 /*****************************************************************************
-*
-*  Spill the top of the FP x87 stack.
-*/
+ *
+ *  Spill the top of the FP x87 stack.
+ */
 void RegSet::rsSpillFPStack(GenTreeCall* call)
 {
     SpillDsc* spill;
@@ -490,7 +526,7 @@ TempDsc* RegSet::rsUnspillInPlace(GenTree* tree, regNumber oldReg, unsigned regI
     // Get the tree's SpillDsc
     SpillDsc* prevDsc;
     SpillDsc* spillDsc = rsGetSpillInfo(tree, oldReg, &prevDsc);
-    PREFIX_ASSUME(spillDsc != nullptr);
+    assert(spillDsc != nullptr);
 
     // Get the temp
     TempDsc* temp = rsGetSpillTempWord(oldReg, spillDsc, prevDsc);
@@ -563,7 +599,7 @@ var_types RegSet::tmpNormalizeType(var_types type)
     // We always spill SIMD12 to a 16-byte SIMD16 temp.
     // This is because we don't have a single instruction to store 12 bytes, so we want
     // to ensure that we always have the full 16 bytes for loading & storing the value.
-    // We also allocate non-argument locals as 16 bytes; see lvSize().
+    // We also allocate non-argument locals as 16 bytes; see lvaLclStackHomeSize().
     if (type == TYP_SIMD12)
     {
         type = TYP_SIMD16;
@@ -876,7 +912,7 @@ XXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXX
 
 regNumber genRegArgNext(regNumber argReg)
 {
-    assert(isValidIntArgReg(argReg) || isValidFloatArgReg(argReg));
+    assert(isValidIntArgReg(argReg, CorInfoCallConvExtension::Managed) || isValidFloatArgReg(argReg));
 
     switch (argReg)
     {
@@ -906,30 +942,6 @@ regNumber genRegArgNext(regNumber argReg)
         default:
             return REG_NEXT(argReg);
     }
-}
-
-/*****************************************************************************
- *
- *  The following table determines the order in which callee-saved registers
- *  are encoded in GC information at call sites (perhaps among other things).
- *  In any case, they establish a mapping from ordinal callee-save reg "indices" to
- *  register numbers and corresponding bitmaps.
- */
-
-const regNumber raRegCalleeSaveOrder[] = {REG_CALLEE_SAVED_ORDER};
-const regMaskTP raRbmCalleeSaveOrder[] = {RBM_CALLEE_SAVED_ORDER};
-
-regMaskSmall genRegMaskFromCalleeSavedMask(unsigned short calleeSaveMask)
-{
-    regMaskSmall res = 0;
-    for (int i = 0; i < CNT_CALLEE_SAVED; i++)
-    {
-        if ((calleeSaveMask & ((regMaskTP)1 << i)) != 0)
-        {
-            res |= raRbmCalleeSaveOrder[i];
-        }
-    }
-    return res;
 }
 
 /*****************************************************************************

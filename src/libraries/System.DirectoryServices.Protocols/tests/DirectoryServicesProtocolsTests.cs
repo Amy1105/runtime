@@ -2,24 +2,23 @@
 // The .NET Foundation licenses this file to you under the MIT license.
 
 using System.Collections.Generic;
-using System.Diagnostics;
 using System.DirectoryServices.Tests;
 using System.Globalization;
+using System.IO;
 using System.Net;
-using System.Text;
-using System.Threading;
 using Xunit;
 
 namespace System.DirectoryServices.Protocols.Tests
 {
     public partial class DirectoryServicesProtocolsTests
     {
-        internal static bool IsLdapConfigurationExist => LdapConfiguration.Configuration != null;
-        internal static bool IsActiveDirectoryServer => IsLdapConfigurationExist && LdapConfiguration.Configuration.IsActiveDirectoryServer;
+        internal static bool LdapConfigurationExists => LdapConfiguration.Configuration != null;
+        internal static bool IsActiveDirectoryServer => LdapConfigurationExists && LdapConfiguration.Configuration.IsActiveDirectoryServer;
+        internal static bool UseTls => LdapConfigurationExists && LdapConfiguration.Configuration.UseTls;
 
-        internal static bool IsServerSideSortSupported => IsLdapConfigurationExist && LdapConfiguration.Configuration.SupportsServerSideSort;
+        internal static bool IsServerSideSortSupported => LdapConfigurationExists && LdapConfiguration.Configuration.SupportsServerSideSort;
 
-        [ConditionalFact(nameof(IsLdapConfigurationExist))]
+        [ConditionalFact(nameof(LdapConfigurationExists))]
         public void TestInvalidFilter()
         {
             using LdapConnection connection = GetConnection();
@@ -33,7 +32,7 @@ namespace System.DirectoryServices.Protocols.Tests
             Assert.Equal(/* LdapError.FilterError */ 0x57, ex.ErrorCode);
         }
 
-        [ConditionalFact(nameof(IsLdapConfigurationExist))]
+        [ConditionalFact(nameof(LdapConfigurationExists))]
         public void TestInvalidSearchDn()
         {
             using LdapConnection connection = GetConnection();
@@ -47,7 +46,7 @@ namespace System.DirectoryServices.Protocols.Tests
             Assert.Equal(ResultCode.InvalidDNSyntax, ex.Response.ResultCode);
         }
 
-        [ConditionalFact(nameof(IsLdapConfigurationExist))]
+        [ConditionalFact(nameof(LdapConfigurationExists))]
         public void TestUnavailableCriticalExtension()
         {
             using LdapConnection connection = GetConnection();
@@ -63,7 +62,7 @@ namespace System.DirectoryServices.Protocols.Tests
             Assert.Equal(ResultCode.UnavailableCriticalExtension, ex.Response.ResultCode);
         }
 
-        [ConditionalFact(nameof(IsLdapConfigurationExist))]
+        [ConditionalFact(nameof(LdapConfigurationExists))]
         public void TestUnavailableNonCriticalExtension()
         {
             using LdapConnection connection = GetConnection();
@@ -74,10 +73,22 @@ namespace System.DirectoryServices.Protocols.Tests
             _ = (SearchResponse) connection.SendRequest(searchRequest);
             // Does not throw
         }
+
+        [ConditionalFact(nameof(LdapConfigurationExists))]
+        public void TestServerWithPortNumber()
+        {
+            using LdapConnection connection = GetConnection($"{LdapConfiguration.Configuration.ServerName}:{LdapConfiguration.Configuration.Port}");
+
+            var searchRequest = new SearchRequest(LdapConfiguration.Configuration.SearchDn, "(objectClass=*)", SearchScope.Subtree);
+
+            _ = (SearchResponse)connection.SendRequest(searchRequest);
+            // Shall succeed
+        }
+
         [InlineData(60)]
         [InlineData(0)]
         [InlineData(-60)]
-        [ConditionalTheory(nameof(IsLdapConfigurationExist))]
+        [ConditionalTheory(nameof(LdapConfigurationExists))]
         public void TestSearchWithTimeLimit(int timeLimit)
         {
             using LdapConnection connection = GetConnection();
@@ -95,7 +106,7 @@ namespace System.DirectoryServices.Protocols.Tests
             }
         }
 
-        [ConditionalFact(nameof(IsLdapConfigurationExist))]
+        [ConditionalFact(nameof(LdapConfigurationExists))]
         public void TestAddingOU()
         {
             using (LdapConnection connection = GetConnection())
@@ -117,7 +128,7 @@ namespace System.DirectoryServices.Protocols.Tests
             }
         }
 
-        [ConditionalFact(nameof(IsLdapConfigurationExist))]
+        [ConditionalFact(nameof(LdapConfigurationExists))]
         public void TestDeleteOU()
         {
             using (LdapConnection connection = GetConnection())
@@ -142,7 +153,7 @@ namespace System.DirectoryServices.Protocols.Tests
             }
         }
 
-        [ConditionalFact(nameof(IsLdapConfigurationExist))]
+        [ConditionalFact(nameof(LdapConfigurationExists))]
         public void TestAddAndModifyAttribute()
         {
             using (LdapConnection connection = GetConnection())
@@ -177,7 +188,7 @@ namespace System.DirectoryServices.Protocols.Tests
             }
         }
 
-        [ConditionalFact(nameof(IsLdapConfigurationExist))]
+        [ConditionalFact(nameof(LdapConfigurationExists))]
         public void TestNestedOUs()
         {
             using (LdapConnection connection = GetConnection())
@@ -208,7 +219,7 @@ namespace System.DirectoryServices.Protocols.Tests
             }
         }
 
-        [ConditionalFact(nameof(IsLdapConfigurationExist))]
+        [ConditionalFact(nameof(LdapConfigurationExists))]
         public void TestAddUser()
         {
             using (LdapConnection connection = GetConnection())
@@ -260,7 +271,7 @@ namespace System.DirectoryServices.Protocols.Tests
             }
         }
 
-        [ConditionalFact(nameof(IsLdapConfigurationExist))]
+        [ConditionalFact(nameof(LdapConfigurationExists))]
         public void TestAddingMultipleAttributes()
         {
             using (LdapConnection connection = GetConnection())
@@ -343,7 +354,7 @@ namespace System.DirectoryServices.Protocols.Tests
             }
         }
 
-        [ConditionalFact(nameof(IsLdapConfigurationExist))]
+        [ConditionalFact(nameof(LdapConfigurationExists))]
         public void TestMoveAndRenameUser()
         {
             using (LdapConnection connection = GetConnection())
@@ -402,7 +413,7 @@ namespace System.DirectoryServices.Protocols.Tests
             }
         }
 
-        [ConditionalFact(nameof(IsLdapConfigurationExist))]
+        [ConditionalFact(nameof(LdapConfigurationExists))]
         public void TestAsyncSearch()
         {
             using (LdapConnection connection = GetConnection())
@@ -513,7 +524,7 @@ namespace System.DirectoryServices.Protocols.Tests
             yield return new object[] { "http://example.com/", "http://false/"u8.ToArray(), ResultCode.CompareFalse };
         }
 
-        [ConditionalTheory(nameof(IsLdapConfigurationExist))]
+        [ConditionalTheory(nameof(LdapConfigurationExists))]
         [MemberData(nameof(TestCompareRequestTheory_TestData))]
         public void TestCompareRequestTheory(object value, object assertion, ResultCode compareResult)
         {
@@ -546,7 +557,7 @@ namespace System.DirectoryServices.Protocols.Tests
             }
         }
 
-        [ConditionalFact(nameof(IsLdapConfigurationExist))]
+        [ConditionalFact(nameof(LdapConfigurationExists))]
         public void TestCompareRequest()
         {
             using (LdapConnection connection = GetConnection())
@@ -657,7 +668,7 @@ namespace System.DirectoryServices.Protocols.Tests
                     Assert.Equal(1, searchResponse.Controls.Length);
                     Assert.True(searchResponse.Controls[0] is SortResponseControl);
                     Assert.True(searchResponse.Entries.Count > 0);
-                    Assert.Equal("ou=ProtocolsSubGroup10.9," + dn + "," + LdapConfiguration.Configuration.SearchDn, searchResponse.Entries[0].DistinguishedName);
+                    Assert.Equal("ou=ProtocolsSubGroup10.9," + dn + "," + LdapConfiguration.Configuration.SearchDn, searchResponse.Entries[0].DistinguishedName, true);
                 }
                 finally
                 {
@@ -670,7 +681,7 @@ namespace System.DirectoryServices.Protocols.Tests
             }
         }
 
-        [ConditionalFact(nameof(IsLdapConfigurationExist))]
+        [ConditionalFact(nameof(LdapConfigurationExists))]
         public void TestMultipleServerBind()
         {
             LdapDirectoryIdentifier directoryIdentifier = string.IsNullOrEmpty(LdapConfiguration.Configuration.Port) ?
@@ -693,6 +704,64 @@ namespace System.DirectoryServices.Protocols.Tests
 
             connection.Timeout = new TimeSpan(0, 3, 0);
         }
+
+#if NET
+        [ConditionalFact(nameof(UseTls))]
+        [PlatformSpecific(TestPlatforms.Linux)]
+        public void StartNewTlsSessionContext()
+        {
+            using (var connection = GetConnection(bind: false))
+            {
+                // We use "." as the directory since it must be a valid directory for StartNewTlsSessionContext() + Bind() to be successful even
+                // though there are no client certificates in ".".
+                connection.SessionOptions.TrustedCertificatesDirectory = ".";
+
+                // For a real-world scenario, we would call 'StartTransportLayerSecurity(null)' here which would do the TLS handshake including
+                // providing the client certificate to the server and validating the server certificate. However, this requires additional
+                // setup that we don't have including trusting the server certificate and by specifying "demand" in the setup of the server
+                // via 'LDAP_TLS_VERIFY_CLIENT=demand' to force the TLS handshake to occur.
+
+                connection.SessionOptions.StartNewTlsSessionContext();
+                connection.Bind();
+
+                SearchRequest searchRequest = new (LdapConfiguration.Configuration.SearchDn, "(objectClass=*)", SearchScope.Subtree);
+                _ = (SearchResponse)connection.SendRequest(searchRequest);
+            }
+        }
+
+        [ConditionalFact(nameof(UseTls))]
+        [PlatformSpecific(TestPlatforms.Linux)]
+        public void StartNewTlsSessionContext_ThrowsLdapException()
+        {
+            using (var connection = GetConnection(bind: false))
+            {
+                // Create a new session context without setting TrustedCertificatesDirectory.
+                connection.SessionOptions.StartNewTlsSessionContext();
+                Assert.Throws<PlatformNotSupportedException>(() => connection.Bind());
+            }
+        }
+
+        [ConditionalFact(nameof(LdapConfigurationExists))]
+        [PlatformSpecific(TestPlatforms.Linux)]
+        public void TrustedCertificatesDirectory_ThrowsDirectoryNotFoundException()
+        {
+            using (var connection = GetConnection(bind: false))
+            {
+                Assert.Throws<DirectoryNotFoundException>(() => connection.SessionOptions.TrustedCertificatesDirectory = "nonexistent");
+            }
+        }
+
+        [ConditionalFact(nameof(LdapConfigurationExists))]
+        [PlatformSpecific(TestPlatforms.Windows)]
+        public void StartNewTlsSessionContext_ThrowsPlatformNotSupportedException()
+        {
+            using (var connection = new LdapConnection("server"))
+            {
+                LdapSessionOptions options = connection.SessionOptions;
+                Assert.Throws<PlatformNotSupportedException>(() => options.StartNewTlsSessionContext());
+            }
+        }
+#endif
 
         private void DeleteAttribute(LdapConnection connection, string entryDn, string attributeName)
         {
@@ -774,13 +843,25 @@ namespace System.DirectoryServices.Protocols.Tests
             return null;
         }
 
-        private LdapConnection GetConnection()
+        private static LdapConnection GetConnection(string server)
+        {
+            LdapDirectoryIdentifier directoryIdentifier = new LdapDirectoryIdentifier(server, fullyQualifiedDnsHostName: true, connectionless: false);
+
+            return GetConnection(directoryIdentifier);
+        }
+
+        private static LdapConnection GetConnection(bool bind = true)
         {
             LdapDirectoryIdentifier directoryIdentifier = string.IsNullOrEmpty(LdapConfiguration.Configuration.Port) ?
-                                        new LdapDirectoryIdentifier(LdapConfiguration.Configuration.ServerName, true, false) :
+                                        new LdapDirectoryIdentifier(LdapConfiguration.Configuration.ServerName, fullyQualifiedDnsHostName: true, connectionless: false) :
                                         new LdapDirectoryIdentifier(LdapConfiguration.Configuration.ServerName,
                                                                     int.Parse(LdapConfiguration.Configuration.Port, NumberStyles.None, CultureInfo.InvariantCulture),
-                                                                    true, false);
+                                                                    fullyQualifiedDnsHostName: true, connectionless: false);
+            return GetConnection(directoryIdentifier, bind);
+        }
+
+        private static LdapConnection GetConnection(LdapDirectoryIdentifier directoryIdentifier, bool bind = true)
+        {
             NetworkCredential credential = new NetworkCredential(LdapConfiguration.Configuration.UserName, LdapConfiguration.Configuration.Password);
 
             LdapConnection connection = new LdapConnection(directoryIdentifier, credential)
@@ -792,7 +873,11 @@ namespace System.DirectoryServices.Protocols.Tests
             // to LDAP v2, which we do not support, and will return LDAP_PROTOCOL_ERROR
             connection.SessionOptions.ProtocolVersion = 3;
             connection.SessionOptions.SecureSocketLayer = LdapConfiguration.Configuration.UseTls;
-            connection.Bind();
+
+            if (bind)
+            {
+                connection.Bind();
+            }
 
             connection.Timeout = new TimeSpan(0, 3, 0);
             return connection;

@@ -71,11 +71,7 @@ const char * GetDebugCodeName(DWORD dwCode)
 // Per-thread state for Debug builds...
 //-----------------------------------------------------------------------------
 #ifdef RSCONTRACTS
-#ifndef __GNUC__
-__declspec(thread) DbgRSThread* DbgRSThread::t_pCurrent;
-#else // !__GNUC__
-__thread DbgRSThread* DbgRSThread::t_pCurrent;
-#endif // !__GNUC__
+thread_local DbgRSThread* DbgRSThread::t_pCurrent;
 
 LONG DbgRSThread::s_Total = 0;
 
@@ -1706,7 +1702,7 @@ HRESULT Cordb::CreateProcessCommon(ICorDebugRemoteTarget * pRemoteTarget,
 
         UnlockProcessList();
 
-        PREFIX_ASSUME(pProcess != NULL);
+        _ASSERTE(pProcess != NULL);
 
         pProcess->ExternalAddRef();
         *ppProcess = (ICorDebugProcess *)pProcess;
@@ -1974,20 +1970,6 @@ HRESULT Cordb::EnumerateProcesses(ICorDebugProcessEnum **ppProcesses)
     return hr;
 }
 
-
-//
-// Note: the following defs and structs are copied from various NT headers. I wasn't able to include those headers (like
-// ntexapi.h) due to loads of redef problems and other conflicts with headers that we already pull in.
-//
-typedef LONG NTSTATUS;
-
-#ifndef TARGET_UNIX
-typedef BOOL (*NTQUERYSYSTEMINFORMATION)(SYSTEM_INFORMATION_CLASS SystemInformationClass,
-                                         PVOID SystemInformation,
-                                         ULONG SystemInformationLength,
-                                         PULONG ReturnLength);
-#endif
-
 // Implementation of ICorDebug::CanLaunchOrAttach
 // @dbgtodo-  this all goes away in V3.
 // @dbgtodo-  this should go away in Dev11.
@@ -2044,11 +2026,6 @@ void Cordb::EnsureCanLaunchOrAttach(BOOL fWin32DebuggingEnabled)
     }
 
     // Made it this far, we succeeded.
-}
-
-HRESULT Cordb::CreateObjectV1(REFIID id, void **object)
-{
-    return CreateObject(CorDebugVersion_1_0, ProcessDescriptor::UNINITIALIZED_PID, NULL, NULL, id, object);
 }
 
 #if defined(FEATURE_DBGIPC_TRANSPORT_DI)
@@ -2510,7 +2487,7 @@ HRESULT CordbEnumFilter::Init (ICorDebugModuleEnum * pModEnum, CordbAssembly *pA
             }
             else
             {
-                PREFIX_ASSUME(pPrevious != NULL);
+                _ASSERTE(pPrevious != NULL);
                 pPrevious->SetNext (pElement);
             }
             pPrevious = pElement;
@@ -2614,7 +2591,7 @@ HRESULT CordbEnumFilter::Init (ICorDebugThreadEnum *pThreadEnum, CordbAppDomain 
             }
             else
             {
-                PREFIX_ASSUME(pPrevious != NULL);
+                _ASSERTE(pPrevious != NULL);
                 pPrevious->SetNext (pElement);
             }
 

@@ -39,13 +39,11 @@ namespace System.Security.Cryptography.Pkcs
                 _expectedDigest = expectedDigest;
             }
 
-            protected override bool VerifyKeyType(AsymmetricAlgorithm key)
-            {
-                return (key as RSA) != null;
-            }
+            protected override bool VerifyKeyType(object key) => key is RSA;
+            internal override bool NeedsHashedMessage => true;
 
             internal override bool VerifySignature(
-#if NETCOREAPP || NETSTANDARD2_1
+#if NET || NETSTANDARD2_1
                 ReadOnlySpan<byte> valueHash,
                 ReadOnlyMemory<byte> signature,
 #else
@@ -53,10 +51,11 @@ namespace System.Security.Cryptography.Pkcs
                 byte[] signature,
 #endif
                 string? digestAlgorithmOid,
-                HashAlgorithmName digestAlgorithmName,
                 ReadOnlyMemory<byte>? signatureParameters,
                 X509Certificate2 certificate)
             {
+                HashAlgorithmName digestAlgorithmName = PkcsHelpers.GetDigestAlgorithm(digestAlgorithmOid, forVerification: true);
+
                 if (_expectedDigest.HasValue && _expectedDigest.Value != digestAlgorithmName)
                 {
                     throw new CryptographicException(
@@ -81,7 +80,7 @@ namespace System.Security.Cryptography.Pkcs
 
                 return publicKey.VerifyHash(
                     valueHash,
-#if NETCOREAPP || NETSTANDARD2_1
+#if NET || NETSTANDARD2_1
                     signature.Span,
 #else
                     signature,
@@ -97,14 +96,14 @@ namespace System.Security.Cryptography.Pkcs
                 int digestValueLength);
 
             private protected static bool SignCore(
-#if NETCOREAPP || NETSTANDARD2_1
+#if NET || NETSTANDARD2_1
                 ReadOnlySpan<byte> dataHash,
 #else
                 byte[] dataHash,
 #endif
                 HashAlgorithmName hashAlgorithmName,
                 X509Certificate2 certificate,
-                AsymmetricAlgorithm? key,
+                object? key,
                 bool silent,
                 RSASignaturePadding signaturePadding,
                 [NotNullWhen(true)] out byte[]? signatureValue)
@@ -122,7 +121,7 @@ namespace System.Security.Cryptography.Pkcs
                     return false;
                 }
 
-#if NETCOREAPP || NETSTANDARD2_1
+#if NET || NETSTANDARD2_1
                 byte[] signature = new byte[privateKey.KeySize / 8];
 
                 bool signed = privateKey.TrySignHash(
@@ -147,7 +146,7 @@ namespace System.Security.Cryptography.Pkcs
                 }
 #endif
                 signatureValue = privateKey.SignHash(
-#if NETCOREAPP || NETSTANDARD2_1
+#if NET || NETSTANDARD2_1
                     dataHash.ToArray(),
 #else
                     dataHash,
@@ -186,9 +185,7 @@ namespace System.Security.Cryptography.Pkcs
                     return RSASignaturePadding.Pkcs1;
                 }
 
-                Span<byte> expectedParameters = stackalloc byte[2];
-                expectedParameters[0] = 0x05;
-                expectedParameters[1] = 0x00;
+                ReadOnlySpan<byte> expectedParameters = [0x05, 0x00];
 
                 if (expectedParameters.SequenceEqual(signatureParameters.Value.Span))
                 {
@@ -199,14 +196,14 @@ namespace System.Security.Cryptography.Pkcs
             }
 
             protected override bool Sign(
-#if NETCOREAPP || NETSTANDARD2_1
+#if NET || NETSTANDARD2_1
                 ReadOnlySpan<byte> dataHash,
 #else
                 byte[] dataHash,
 #endif
-                HashAlgorithmName hashAlgorithmName,
+                string? hashAlgorithmOid,
                 X509Certificate2 certificate,
-                AsymmetricAlgorithm? key,
+                object? key,
                 bool silent,
                 [NotNullWhen(true)] out string? signatureAlgorithm,
                 [NotNullWhen(true)] out byte[]? signatureValue,
@@ -214,7 +211,7 @@ namespace System.Security.Cryptography.Pkcs
             {
                 bool result = SignCore(
                     dataHash,
-                    hashAlgorithmName,
+                    PkcsHelpers.GetDigestAlgorithm(hashAlgorithmOid),
                     certificate,
                     key,
                     silent,
@@ -319,19 +316,21 @@ namespace System.Security.Cryptography.Pkcs
             }
 
             protected override bool Sign(
-#if NETCOREAPP || NETSTANDARD2_1
+#if NET || NETSTANDARD2_1
                 ReadOnlySpan<byte> dataHash,
 #else
                 byte[] dataHash,
 #endif
-                HashAlgorithmName hashAlgorithmName,
+                string? hashAlgorithmOid,
                 X509Certificate2 certificate,
-                AsymmetricAlgorithm? key,
+                object? key,
                 bool silent,
                 [NotNullWhen(true)] out string? signatureAlgorithm,
                 [NotNullWhen(true)] out byte[]? signatureValue,
                 out byte[]? signatureParameters)
             {
+                HashAlgorithmName hashAlgorithmName = PkcsHelpers.GetDigestAlgorithm(hashAlgorithmOid);
+
                 bool result = SignCore(
                     dataHash,
                     hashAlgorithmName,

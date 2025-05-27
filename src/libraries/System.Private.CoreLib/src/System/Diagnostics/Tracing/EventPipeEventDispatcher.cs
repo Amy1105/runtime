@@ -3,17 +3,15 @@
 using System.Collections.Generic;
 using System.Threading;
 using System.Threading.Tasks;
-using Microsoft.Win32.SafeHandles;
 
 namespace System.Diagnostics.Tracing
 {
-#if FEATURE_PERFTRACING
-    internal sealed class EventPipeEventDispatcher
+    internal sealed partial class EventPipeEventDispatcher
     {
         internal sealed class EventListenerSubscription
         {
-            internal EventKeywords MatchAnyKeywords { get; private set; }
-            internal EventLevel Level { get; private set; }
+            internal EventKeywords MatchAnyKeywords { get; }
+            internal EventLevel Level { get; }
 
             internal EventListenerSubscription(EventKeywords matchAnyKeywords, EventLevel level)
             {
@@ -98,22 +96,22 @@ namespace System.Diagnostics.Tracing
             }
 
             // Enable the EventPipe session.
-            EventPipeProviderConfiguration[] providerConfiguration = new EventPipeProviderConfiguration[]
-            {
+            EventPipeProviderConfiguration[] providerConfiguration =
+            [
                 new EventPipeProviderConfiguration(NativeRuntimeEventSource.EventSourceName, (ulong)aggregatedKeywords, (uint)enableLevel, null)
-            };
+            ];
 
-            m_sessionID = EventPipeInternal.Enable(null, EventPipeSerializationFormat.NetTrace, DefaultEventListenerCircularMBSize, providerConfiguration);
-            if (m_sessionID == 0)
+            ulong sessionID = EventPipeInternal.Enable(null, EventPipeSerializationFormat.NetTrace, DefaultEventListenerCircularMBSize, providerConfiguration);
+            if (sessionID == 0)
             {
-                throw new EventSourceException(SR.EventSource_CouldNotEnableEventPipe);
+                return;
             }
 
             // Get the session information that is required to properly dispatch events.
             EventPipeSessionInfo sessionInfo;
             unsafe
             {
-                if (!EventPipeInternal.GetSessionInfo(m_sessionID, &sessionInfo))
+                if (!EventPipeInternal.GetSessionInfo(sessionID, &sessionInfo))
                 {
                     Debug.Fail("GetSessionInfo returned false.");
                 }
@@ -124,42 +122,36 @@ namespace System.Diagnostics.Tracing
             long syncTimeQPC = sessionInfo.StartTimeStamp;
             long timeQPCFrequency = sessionInfo.TimeStampFrequency;
 
+            Debug.Assert(Volatile.Read(ref m_sessionID) == 0);
+            Volatile.Write(ref m_sessionID, sessionID);
+
             // Start the dispatch task.
-            StartDispatchTask(m_sessionID, syncTimeUtc, syncTimeQPC, timeQPCFrequency);
-        }
-
-        private void StartDispatchTask(ulong sessionID, DateTime syncTimeUtc, long syncTimeQPC, long timeQPCFrequency)
-        {
-            Debug.Assert(Monitor.IsEntered(m_dispatchControlLock));
-            Debug.Assert(sessionID != 0);
-
-            m_dispatchTaskCancellationSource = new CancellationTokenSource();
-            Task? previousDispatchTask = m_dispatchTask;
-            m_dispatchTask = Task.Factory.StartNew(() => DispatchEventsToEventListeners(sessionID, syncTimeUtc, syncTimeQPC, timeQPCFrequency, previousDispatchTask, m_dispatchTaskCancellationSource.Token), CancellationToken.None, TaskCreationOptions.LongRunning, TaskScheduler.Default);
+            StartDispatchTask(sessionID, syncTimeUtc, syncTimeQPC, timeQPCFrequency);
         }
 
         private void SetStopDispatchTask()
         {
             Debug.Assert(Monitor.IsEntered(m_dispatchControlLock));
 
-            if (m_dispatchTask != null)
+            if (m_dispatchTaskCancellationSource?.IsCancellationRequested ?? true)
             {
-                Debug.Assert(m_dispatchTaskCancellationSource != null);
-                m_dispatchTaskCancellationSource?.Cancel();
-                EventPipeInternal.SignalSession(m_sessionID);
+                return;
             }
+
+            ulong sessionID = Volatile.Read(ref m_sessionID);
+            Debug.Assert(sessionID != 0);
+            m_dispatchTaskCancellationSource.Cancel();
+            EventPipeInternal.SignalSession(sessionID);
+            Volatile.Write(ref m_sessionID, 0);
         }
 
-        private unsafe void DispatchEventsToEventListeners(ulong sessionID, DateTime syncTimeUtc, long syncTimeQPC, long timeQPCFrequency, Task? previousDispatchTask, CancellationToken token)
+        private unsafe bool DispatchEventsToEventListenersOnce(ulong sessionID, DateTime syncTimeUtc, long syncTimeQPC, long timeQPCFrequency, CancellationToken token)
         {
-            Debug.Assert(sessionID != 0);
-            previousDispatchTask?.Wait(CancellationToken.None);
+            bool eventsReceived = false;
 
             // Struct to fill with the call to GetNextEvent.
             EventPipeEventInstanceData instanceData;
-            while (!token.IsCancellationRequested)
-            {
-                bool eventsReceived = false;
+
                 // Get the next event.
                 while (!token.IsCancellationRequested && EventPipeInternal.GetNextEvent(sessionID, &instanceData))
                 {
@@ -174,21 +166,7 @@ namespace System.Diagnostics.Tracing
                         NativeRuntimeEventSource.Log.ProcessEvent(instanceData.EventID, instanceData.ThreadID, dateTimeStamp, instanceData.ActivityId, instanceData.ChildActivityId, payload);
                     }
                 }
-
-                // Wait for more events.
-                if (!token.IsCancellationRequested)
-                {
-                    if (!eventsReceived)
-                    {
-                        EventPipeInternal.WaitForSessionSignal(sessionID, Timeout.Infinite);
-                    }
-
-                    Thread.Sleep(10);
-                }
-            }
-
-            // Disable the old session. This can happen asynchronously since we aren't using the old session anymore
-            EventPipeInternal.Disable(sessionID);
+            return eventsReceived;
         }
 
         /// <summary>
@@ -211,5 +189,4 @@ namespace System.Diagnostics.Tracing
             return new DateTime(inTicks, DateTimeKind.Utc);
         }
     }
-#endif // FEATURE_PERFTRACING
 }

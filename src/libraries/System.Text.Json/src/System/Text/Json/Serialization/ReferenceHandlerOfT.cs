@@ -11,7 +11,7 @@ namespace System.Text.Json.Serialization
     /// 每次序列化或反序列化调用时要创建的<see cref=“ReferenceResolver”/>的类型
     /// </typeparam>
     public sealed class ReferenceHandler<T> : ReferenceHandler
-        where T: ReferenceResolver, new()
+        where T : ReferenceResolver, new()
     {
         /// <summary>
         /// Creates a new <see cref="ReferenceResolver"/> of type <typeparamref name="T"/> used for each serialization call.

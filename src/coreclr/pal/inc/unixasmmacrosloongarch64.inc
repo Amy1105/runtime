@@ -17,6 +17,12 @@
 C_FUNC(\Name):
 .endm
 
+.macro ALTERNATE_ENTRY Name
+        .global C_FUNC(\Name)
+        .hidden C_FUNC(\Name)
+C_FUNC(\Name):
+.endm
+
 .macro LEAF_ENTRY Name, Section
         .global C_FUNC(\Name)
         .type \Name, %function
@@ -39,6 +45,16 @@ C_FUNC(\Name\()_End):
 
 .macro PREPARE_EXTERNAL_VAR Name, HelperReg
     la.local  \HelperReg, \Name
+.endm
+
+.macro PREPARE_EXTERNAL_VAR_INDIRECT Name, HelperReg
+        la.local  \HelperReg, \Name
+        ld.d  \HelperReg, \HelperReg, 0
+.endm
+
+.macro PREPARE_EXTERNAL_VAR_INDIRECT_W Name, HelperReg
+        la.local  \HelperReg, \Name
+        ld.w  \HelperReg, \HelperReg, 0
 .endm
 
 .macro PROLOG_STACK_ALLOC Size
@@ -160,7 +176,7 @@ C_FUNC(\Name\()_End):
         PROLOG_SAVE_REG_PAIR 25, 26, \ofs + 32
         PROLOG_SAVE_REG_PAIR 27, 28, \ofs + 48
         PROLOG_SAVE_REG_PAIR 29, 30, \ofs + 64
-        PROLOG_SAVE_REG_PAIR 31, 2,  \ofs + 80
+        PROLOG_SAVE_REG      31,     \ofs + 80
 
 .endm
 
@@ -235,8 +251,7 @@ C_FUNC(\Name\()_End):
 
 .macro RESTORE_CALLEESAVED_REGISTERS reg, ofs
 
-        EPILOG_RESTORE_REG_PAIR 31, 2   \ofs + 80
-
+        EPILOG_RESTORE_REG      31,     \ofs + 80
         EPILOG_RESTORE_REG_PAIR 29, 30, \ofs + 64
         EPILOG_RESTORE_REG_PAIR 27, 28, \ofs + 48
         EPILOG_RESTORE_REG_PAIR 25, 26, \ofs + 32
@@ -322,7 +337,6 @@ C_FUNC(\Name\()_End):
 //            GPR_a0
 //
 // General Registers:
-//            GPR_tp
 //            GPR_s8
 //            GPR_s7
 //            GPR_s6
@@ -366,7 +380,7 @@ C_FUNC(\Name\()_End):
         __PWTB_CalleeSavedRegisters = __PWTB_TransitionBlock
         __PWTB_ArgumentRegisters = __PWTB_TransitionBlock + 96
 
-        // Including fp, ra, s0-s8, tp, and (a0-a7)arguments. (1+1+9+1)*8 + 8*8.
+        // Including fp, ra, s0-s8, padding, and (a0-a7)arguments. (1+1+9+1)*8 + 8*8.
         __PWTB_StackAlloc = __PWTB_TransitionBlock + 96 + 64
         PROLOG_STACK_ALLOC __PWTB_StackAlloc
         //                   $fp,$ra
@@ -447,7 +461,7 @@ __RedirectionFuncName SETS "|?RedirectedHandledJITCaseFor":CC:"$reason":CC:"@Thr
 
         // Stack alignment. This check is necessary as this function can be
         // entered before complete execution of the prolog of another function.
-        andi $t4, $fp, 15
+        andi $t4, $fp, 0xf
         sub.d  $sp, $sp, $t4
 
 
@@ -480,5 +494,21 @@ $__RedirectionStubEndFuncName
         NESTED_END
 #else
         EMIT_BREAKPOINT
+#endif
+.endm
+
+//-----------------------------------------------------------------------------
+// Macro used to check (in debug builds only) whether the stack is 16-bytes aligned (a requirement before calling
+// out into C++/OS code). Invoke this directly after your prolog (if the stack frame size is fixed) or directly
+// before a call (if you have a frame pointer and a dynamic stack). A breakpoint will be invoked if the stack
+// is misaligned.
+//
+.macro  CHECK_STACK_ALIGNMENT
+
+#ifdef _DEBUG
+        andi    $t4, $sp, 0xf
+        beq     $t4, $r0, 0f
+        EMIT_BREAKPOINT
+0:
 #endif
 .endm

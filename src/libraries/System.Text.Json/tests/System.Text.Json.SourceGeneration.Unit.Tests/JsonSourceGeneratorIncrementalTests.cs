@@ -1,17 +1,20 @@
 // Licensed to the .NET Foundation under one or more agreements.
 // The .NET Foundation licenses this file to you under the MIT license.
 
+using System;
 using System.Collections;
 using System.Collections.Generic;
 using System.Linq;
 using System.Reflection;
 using Microsoft.CodeAnalysis;
+using SourceGenerators.Tests;
 using Xunit;
 
 namespace System.Text.Json.SourceGeneration.UnitTests
 {
-    [ActiveIssue("https://github.com/dotnet/runtime/issues/58226", TestPlatforms.Browser)]
     [SkipOnCoreClr("https://github.com/dotnet/runtime/issues/71962", ~RuntimeConfiguration.Release)]
+    [SkipOnMono("https://github.com/dotnet/runtime/issues/92467")]
+    [ConditionalClass(typeof(PlatformDetection), nameof(PlatformDetection.IsNotX86Process), nameof(PlatformDetection.HasAssemblyFiles))] // https://github.com/dotnet/runtime/issues/71962
     public static class JsonSourceGeneratorIncrementalTests
     {
         [Theory]
@@ -29,7 +32,7 @@ namespace System.Text.Json.SourceGeneration.UnitTests
                 ContextGenerationSpec ctx2 = result2.ContextGenerationSpecs[i];
 
                 Assert.NotSame(ctx1, ctx2);
-                AssertStructurallyEqual(ctx1, ctx2);
+                GeneratorTestHelpers.AssertStructurallyEqual(ctx1, ctx2);
 
                 Assert.Equal(ctx1, ctx2);
                 Assert.Equal(ctx1.GetHashCode(), ctx2.GetHashCode());
@@ -41,12 +44,12 @@ namespace System.Text.Json.SourceGeneration.UnitTests
         {
             string source1 = """
                 using System.Text.Json.Serialization;
-                
+
                 namespace Test
                 {
                     [JsonSerializable(typeof(MyPoco))]
                     public partial class JsonContext : JsonSerializerContext { }
-                
+
                     public class MyPoco
                     {
                         public int MyProperty { get; set; } = 42;
@@ -57,7 +60,7 @@ namespace System.Text.Json.SourceGeneration.UnitTests
             string source2 = """
                 using System;
                 using System.Text.Json.Serialization;
-                
+
                 namespace Test
                 {
                     // Same as above but with different implementation
@@ -86,7 +89,7 @@ namespace System.Text.Json.SourceGeneration.UnitTests
             ContextGenerationSpec ctx2 = result2.ContextGenerationSpecs[0];
 
             Assert.NotSame(ctx1, ctx2);
-            AssertStructurallyEqual(ctx1, ctx2);
+            GeneratorTestHelpers.AssertStructurallyEqual(ctx1, ctx2);
 
             Assert.Equal(ctx1, ctx2);
             Assert.Equal(ctx1.GetHashCode(), ctx2.GetHashCode());
@@ -97,12 +100,12 @@ namespace System.Text.Json.SourceGeneration.UnitTests
         {
             string source1 = """
                 using System.Text.Json.Serialization;
-                
+
                 namespace Test
                 {
                     [JsonSerializable(typeof(MyPoco))]
                     public partial class JsonContext : JsonSerializerContext { }
-                
+
                     public class MyPoco
                     {
                         public int MyProperty { get; set; } = 42;
@@ -112,12 +115,12 @@ namespace System.Text.Json.SourceGeneration.UnitTests
 
             string source2 = """
                 using System.Text.Json.Serialization;
-                
+
                 namespace Test
                 {
                     [JsonSerializable(typeof(MyPoco))]
                     public partial class JsonContext : JsonSerializerContext { }
-                
+
                     public class MyPoco
                     {
                         public int MyProperty { get; } = 42; // same, but missing a getter
@@ -245,12 +248,12 @@ namespace System.Text.Json.SourceGeneration.UnitTests
             string source1 = """
                 using System;
                 using System.Text.Json.Serialization;
-                
+
                 namespace Test
                 {
                     [JsonSerializable(typeof(MyPoco))]
                     public partial class JsonContext : JsonSerializerContext { }
-                
+
                     public class MyPoco
                     {
                         public string MyProperty { get; set; } = 42;
@@ -261,7 +264,7 @@ namespace System.Text.Json.SourceGeneration.UnitTests
             string source2 = """
                 using System;
                 using System.Text.Json.Serialization;
-                
+
                 namespace Test
                 {
                     // Same as above but with different implementation
@@ -314,12 +317,12 @@ namespace System.Text.Json.SourceGeneration.UnitTests
             string source1 = """
                 using System;
                 using System.Text.Json.Serialization;
-                
+
                 namespace Test
                 {
                     [JsonSerializable(typeof(MyPoco))]
                     public partial class JsonContext : JsonSerializerContext { }
-                
+
                     public class MyPoco
                     {
                         public string MyProperty { get; set; } = 42;
@@ -330,12 +333,12 @@ namespace System.Text.Json.SourceGeneration.UnitTests
             string source2 = """
                 using System;
                 using System.Text.Json.Serialization;
-                
+
                 namespace Test
                 {
                     [JsonSerializable(typeof(MyPoco))]
                     public partial class JsonContext : JsonSerializerContext { }
-                
+
                     public class MyPoco
                     {
                         public string MyProperty { get; } = 42; // same, but missing a getter
@@ -376,75 +379,6 @@ namespace System.Text.Json.SourceGeneration.UnitTests
             return typeof(CompilationHelper).GetMethods(BindingFlags.Static | BindingFlags.Public)
                 .Where(m => m.ReturnType == typeof(Compilation) && m.GetParameters().Length == 0)
                 .Select(m => new object[] { Delegate.CreateDelegate(typeof(Func<Compilation>), m) });
-        }
-
-        /// <summary>
-        /// Asserts for structural equality, returning a path to the mismatching data when not equal.
-        /// </summary>
-        private static void AssertStructurallyEqual<T>(T expected, T actual)
-        {
-            CheckAreEqualCore(expected, actual, new());
-            static void CheckAreEqualCore(object expected, object actual, Stack<string> path)
-            {
-                if (expected is null || actual is null)
-                {
-                    if (expected is not null || actual is not null)
-                    {
-                        FailNotEqual();
-                    }
-
-                    return;
-                }
-
-                Type type = expected.GetType();
-                if (type != actual.GetType())
-                {
-                    FailNotEqual();
-                    return;
-                }
-
-                if (expected is IEnumerable leftCollection)
-                {
-                    if (actual is not IEnumerable rightCollection)
-                    {
-                        FailNotEqual();
-                        return;
-                    }
-
-                    object?[] expectedValues = leftCollection.Cast<object?>().ToArray();
-                    object?[] actualValues = rightCollection.Cast<object?>().ToArray();
-
-                    for (int i = 0; i < Math.Max(expectedValues.Length, actualValues.Length); i++)
-                    {
-                        object? expectedElement = i < expectedValues.Length ? expectedValues[i] : "<end of collection>";
-                        object? actualElement = i < actualValues.Length ? actualValues[i] : "<end of collection>";
-
-                        path.Push($"[{i}]");
-                        CheckAreEqualCore(expectedElement, actualElement, path);
-                        path.Pop();
-                    }
-                }
-
-                if (type.GetProperty("EqualityContract", BindingFlags.Instance | BindingFlags.NonPublic, null, returnType: typeof(Type), types: Array.Empty<Type>(), null) != null)
-                {
-                    // Type is a C# record, run pointwise equality comparison.
-                    foreach (PropertyInfo property in type.GetProperties(BindingFlags.Public | BindingFlags.Instance))
-                    {
-                        path.Push("." + property.Name);
-                        CheckAreEqualCore(property.GetValue(expected), property.GetValue(actual), path);
-                        path.Pop();
-                    }
-
-                    return;
-                }
-
-                if (!expected.Equals(actual))
-                {
-                    FailNotEqual();
-                }
-
-                void FailNotEqual() => Assert.Fail($"Value not equal in ${string.Join("", path.Reverse())}: expected {expected}, but was {actual}.");
-            }
         }
     }
 }

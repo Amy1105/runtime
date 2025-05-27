@@ -26,7 +26,7 @@
 #define ASSERTE_ALL_BUILDS(expr) _ASSERTE_ALL_BUILDS((expr))
 
 #ifdef TARGET_UNIX
-#define NO_HOSTING_API_RETURN_ADDRESS ((void*)ULONG_PTR_MAX)
+#define NO_HOSTING_API_RETURN_ADDRESS ((void*)UINTPTR_MAX)
 void* g_hostingApiReturnAddress = NO_HOSTING_API_RETURN_ADDRESS;
 
 class HostingApiFrameHolder
@@ -110,9 +110,7 @@ static LPCWSTR* StringArrayToUnicode(int argc, LPCSTR* argv)
 
 static void InitializeStartupFlags(STARTUP_FLAGS* startupFlagsRef)
 {
-    STARTUP_FLAGS startupFlags = static_cast<STARTUP_FLAGS>(
-            STARTUP_FLAGS::STARTUP_LOADER_OPTIMIZATION_SINGLE_DOMAIN |
-            STARTUP_FLAGS::STARTUP_SINGLE_APPDOMAIN);
+    STARTUP_FLAGS startupFlags = static_cast<STARTUP_FLAGS>(0);
 
     if (Configuration::GetKnobBooleanValue(W("System.GC.Concurrent"), CLRConfig::UNSUPPORTED_gcConcurrent))
     {
@@ -138,7 +136,6 @@ static void ConvertConfigPropertiesToUnicode(
     LPCWSTR** propertyValuesWRef,
     BundleProbeFn** bundleProbe,
     PInvokeOverrideFn** pinvokeOverride,
-    bool* hostPolicyEmbedded,
     host_runtime_contract** hostContract)
 {
     LPCWSTR* propertyKeysW = new (nothrow) LPCWSTR[propertyCount];
@@ -169,11 +166,6 @@ static void ConvertConfigPropertiesToUnicode(
             // so we only set the p/invoke override if it has not already been set.
             if (*pinvokeOverride == nullptr)
                 *pinvokeOverride = (PInvokeOverrideFn*)u16_strtoui64(propertyValuesW[propertyIndex], nullptr, 0);
-        }
-        else if (strcmp(propertyKeys[propertyIndex], HOST_PROPERTY_HOSTPOLICY_EMBEDDED) == 0)
-        {
-            // The HOSTPOLICY_EMBEDDED property indicates if the executable has hostpolicy statically linked in
-            *hostPolicyEmbedded = (u16_strcmp(propertyValuesW[propertyIndex], W("true")) == 0);
         }
         else if (strcmp(propertyKeys[propertyIndex], HOST_PROPERTY_RUNTIME_CONTRACT) == 0)
         {
@@ -252,7 +244,6 @@ int coreclr_initialize(
     LPCWSTR* propertyKeysW;
     LPCWSTR* propertyValuesW;
     BundleProbeFn* bundleProbe = nullptr;
-    bool hostPolicyEmbedded = false;
     PInvokeOverrideFn* pinvokeOverride = nullptr;
     host_runtime_contract* hostContract = nullptr;
 
@@ -268,7 +259,6 @@ int coreclr_initialize(
         &propertyValuesW,
         &bundleProbe,
         &pinvokeOverride,
-        &hostPolicyEmbedded,
         &hostContract);
 
 #ifdef TARGET_UNIX
@@ -282,8 +272,6 @@ int coreclr_initialize(
         return hr;
     }
 #endif
-
-    g_hostpolicy_embedded = hostPolicyEmbedded;
 
     if (hostContract != nullptr)
     {
@@ -299,8 +287,6 @@ int coreclr_initialize(
 
     hr = CorHost2::CreateObject(IID_ICLRRuntimeHost4, (void**)&host);
     IfFailRet(hr);
-
-    ConstWStringHolder appDomainFriendlyNameW = StringToUnicode(appDomainFriendlyName);
 
     if (bundleProbe != nullptr)
     {
@@ -320,9 +306,10 @@ int coreclr_initialize(
     hr = host->Start();
     IfFailRet(hr);
 
+    ConstWStringHolder appDomainFriendlyNameW = StringToUnicode(appDomainFriendlyName);
     hr = host->CreateAppDomainWithManager(
         appDomainFriendlyNameW,
-        APPDOMAIN_SECURITY_DEFAULT,
+        0,
         NULL,                    // Name of the assembly that contains the AppDomainManager implementation
         NULL,                    // The AppDomainManager implementation type name
         propertyCount,

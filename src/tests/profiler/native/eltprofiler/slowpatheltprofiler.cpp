@@ -377,7 +377,48 @@ HRESULT STDMETHODCALLTYPE SlowPathELTProfiler::EnterCallback(FunctionIDOrClientI
 
         _sawFuncEnter[functionName.ToWString()] = true;
     }
+    else if (functionName == WCHAR("IntManyMixedStructFunc"))
+    {
+        int i = 11;
+        MixedStruct ss[] = {{1, 1.0}, {2, 2.0}, {3, 3.0}, {4, 4.0}, {5, 5.0}, {6, 6.0}, {7, 7.0}, {8, 8.0}, {9, 9.0}};
+        vector<ExpectedArgValue> expectedValues = {
+            { sizeof(int), (void *)&i, [&](UINT_PTR ptr){ return ValidateInt(ptr, i); } },
+            { sizeof(MixedStruct), (void *)&ss[0], [&](UINT_PTR ptr){ return ValidateMixedStruct(ptr, ss[0]); } },
+            { sizeof(MixedStruct), (void *)&ss[1], [&](UINT_PTR ptr){ return ValidateMixedStruct(ptr, ss[1]); } },
+            { sizeof(MixedStruct), (void *)&ss[2], [&](UINT_PTR ptr){ return ValidateMixedStruct(ptr, ss[2]); } },
+            { sizeof(MixedStruct), (void *)&ss[3], [&](UINT_PTR ptr){ return ValidateMixedStruct(ptr, ss[3]); } },
+            { sizeof(MixedStruct), (void *)&ss[4], [&](UINT_PTR ptr){ return ValidateMixedStruct(ptr, ss[4]); } },
+            { sizeof(MixedStruct), (void *)&ss[5], [&](UINT_PTR ptr){ return ValidateMixedStruct(ptr, ss[5]); } },
+            { sizeof(MixedStruct), (void *)&ss[6], [&](UINT_PTR ptr){ return ValidateMixedStruct(ptr, ss[6]); } },
+            { sizeof(MixedStruct), (void *)&ss[7], [&](UINT_PTR ptr){ return ValidateMixedStruct(ptr, ss[7]); } },
+            { sizeof(MixedStruct), (void *)&ss[8], [&](UINT_PTR ptr){ return ValidateMixedStruct(ptr, ss[8]); } },
+        };
 
+        hr = ValidateFunctionArgs(pArgumentInfo, functionName, expectedValues);
+
+        _sawFuncEnter[functionName.ToWString()] = true;
+    }
+    else if (functionName == WCHAR("DoubleManyMixedStructFunc"))
+    {
+        double d = 11.0;
+        MixedStruct ss[] = {{1, 1.0}, {2, 2.0}, {3, 3.0}, {4, 4.0}, {5, 5.0}, {6, 6.0}, {7, 7.0}, {8, 8.0}, {9, 9.0}};
+        vector<ExpectedArgValue> expectedValues = {
+            { sizeof(double), (void *)&d, [&](UINT_PTR ptr){ return ValidateDouble(ptr, d); } },
+            { sizeof(MixedStruct), (void *)&ss[0], [&](UINT_PTR ptr){ return ValidateMixedStruct(ptr, ss[0]); } },
+            { sizeof(MixedStruct), (void *)&ss[1], [&](UINT_PTR ptr){ return ValidateMixedStruct(ptr, ss[1]); } },
+            { sizeof(MixedStruct), (void *)&ss[2], [&](UINT_PTR ptr){ return ValidateMixedStruct(ptr, ss[2]); } },
+            { sizeof(MixedStruct), (void *)&ss[3], [&](UINT_PTR ptr){ return ValidateMixedStruct(ptr, ss[3]); } },
+            { sizeof(MixedStruct), (void *)&ss[4], [&](UINT_PTR ptr){ return ValidateMixedStruct(ptr, ss[4]); } },
+            { sizeof(MixedStruct), (void *)&ss[5], [&](UINT_PTR ptr){ return ValidateMixedStruct(ptr, ss[5]); } },
+            { sizeof(MixedStruct), (void *)&ss[6], [&](UINT_PTR ptr){ return ValidateMixedStruct(ptr, ss[6]); } },
+            { sizeof(MixedStruct), (void *)&ss[7], [&](UINT_PTR ptr){ return ValidateMixedStruct(ptr, ss[7]); } },
+            { sizeof(MixedStruct), (void *)&ss[8], [&](UINT_PTR ptr){ return ValidateMixedStruct(ptr, ss[8]); } },
+        };
+
+        hr = ValidateFunctionArgs(pArgumentInfo, functionName, expectedValues);
+
+        _sawFuncEnter[functionName.ToWString()] = true;
+    }
     return hr;
 }
 
@@ -489,6 +530,14 @@ HRESULT STDMETHODCALLTYPE SlowPathELTProfiler::LeaveCallback(FunctionIDOrClientI
 
         _sawFuncLeave[functionName.ToWString()] = true;
     }
+    else if (functionName == WCHAR("FloatRetFunc"))
+    {
+        float f = 13.0f;
+        ExpectedArgValue floatRetValue = { sizeof(float), (void *)&f, [&](UINT_PTR ptr){ return ValidateFloat(ptr, f); } };
+        hr = ValidateOneArgument(pRetvalRange, functionName, 0, floatRetValue);
+
+        _sawFuncLeave[functionName.ToWString()] = true;
+    }
     else if (functionName == WCHAR("IntegerSseStructFunc"))
     {
         IntegerSseStruct val = { 1, 2, 3.5 };
@@ -566,7 +615,7 @@ void SlowPathELTProfiler::PrintBytes(const BYTE *bytes, size_t length)
 
 bool SlowPathELTProfiler::ValidateInt(UINT_PTR ptr, int expected)
 {
-    if (ptr == NULL)
+    if (ptr == (UINT_PTR)NULL)
     {
         return false;
     }
@@ -576,7 +625,7 @@ bool SlowPathELTProfiler::ValidateInt(UINT_PTR ptr, int expected)
 
 bool SlowPathELTProfiler::ValidateFloat(UINT_PTR ptr, float expected)
 {
-    if (ptr == NULL)
+    if (ptr == (UINT_PTR)NULL)
     {
         return false;
     }
@@ -586,7 +635,7 @@ bool SlowPathELTProfiler::ValidateFloat(UINT_PTR ptr, float expected)
 
 bool SlowPathELTProfiler::ValidateDouble(UINT_PTR ptr, double expected)
 {
-    if (ptr == NULL)
+    if (ptr == (UINT_PTR)NULL)
     {
         return false;
     }
@@ -596,7 +645,7 @@ bool SlowPathELTProfiler::ValidateDouble(UINT_PTR ptr, double expected)
 
 bool SlowPathELTProfiler::ValidateString(UINT_PTR ptr, const WCHAR *expected)
 {
-    if (ptr == NULL || *(void **)ptr == NULL)
+    if (ptr == (UINT_PTR)NULL || *(void **)ptr == NULL)
     {
         return false;
     }
@@ -624,7 +673,7 @@ bool SlowPathELTProfiler::ValidateString(UINT_PTR ptr, const WCHAR *expected)
 
 bool SlowPathELTProfiler::ValidateMixedStruct(UINT_PTR ptr, MixedStruct expected)
 {
-    if (ptr == NULL)
+    if (ptr == (UINT_PTR)NULL)
     {
         return false;
     }
@@ -635,7 +684,7 @@ bool SlowPathELTProfiler::ValidateMixedStruct(UINT_PTR ptr, MixedStruct expected
 
 bool SlowPathELTProfiler::ValidateLargeStruct(UINT_PTR ptr, LargeStruct expected)
 {
-    if (ptr == NULL)
+    if (ptr == (UINT_PTR)NULL)
     {
         return false;
     }
@@ -653,7 +702,7 @@ bool SlowPathELTProfiler::ValidateLargeStruct(UINT_PTR ptr, LargeStruct expected
 
 bool SlowPathELTProfiler::ValidateFloatingPointStruct(UINT_PTR ptr, Fp32x2Struct expected)
 {
-    if (ptr == NULL)
+    if (ptr == (UINT_PTR)NULL)
     {
         return false;
     }
@@ -664,7 +713,7 @@ bool SlowPathELTProfiler::ValidateFloatingPointStruct(UINT_PTR ptr, Fp32x2Struct
 
 bool SlowPathELTProfiler::ValidateFloatingPointStruct(UINT_PTR ptr, Fp32x3Struct expected)
 {
-    if (ptr == NULL)
+    if (ptr == (UINT_PTR)NULL)
     {
         return false;
     }
@@ -675,7 +724,7 @@ bool SlowPathELTProfiler::ValidateFloatingPointStruct(UINT_PTR ptr, Fp32x3Struct
 
 bool SlowPathELTProfiler::ValidateFloatingPointStruct(UINT_PTR ptr, Fp32x4Struct expected)
 {
-    if (ptr == NULL)
+    if (ptr == (UINT_PTR)NULL)
     {
         return false;
     }
@@ -689,7 +738,7 @@ bool SlowPathELTProfiler::ValidateFloatingPointStruct(UINT_PTR ptr, Fp32x4Struct
 
 bool SlowPathELTProfiler::ValidateFloatingPointStruct(UINT_PTR ptr, Fp64x2Struct expected)
 {
-    if (ptr == NULL)
+    if (ptr == (UINT_PTR)NULL)
     {
         return false;
     }
@@ -700,7 +749,7 @@ bool SlowPathELTProfiler::ValidateFloatingPointStruct(UINT_PTR ptr, Fp64x2Struct
 
 bool SlowPathELTProfiler::ValidateFloatingPointStruct(UINT_PTR ptr, Fp64x3Struct expected)
 {
-    if (ptr == NULL)
+    if (ptr == (UINT_PTR)NULL)
     {
         return false;
     }
@@ -711,7 +760,7 @@ bool SlowPathELTProfiler::ValidateFloatingPointStruct(UINT_PTR ptr, Fp64x3Struct
 
 bool SlowPathELTProfiler::ValidateFloatingPointStruct(UINT_PTR ptr, Fp64x4Struct expected)
 {
-    if (ptr == NULL)
+    if (ptr == (UINT_PTR)NULL)
     {
         return false;
     }
@@ -725,7 +774,7 @@ bool SlowPathELTProfiler::ValidateFloatingPointStruct(UINT_PTR ptr, Fp64x4Struct
 
 bool SlowPathELTProfiler::ValidateIntegerStruct(UINT_PTR ptr, IntegerStruct expected)
 {
-    if (ptr == NULL)
+    if (ptr == (UINT_PTR)NULL)
     {
         return false;
     }
@@ -736,7 +785,7 @@ bool SlowPathELTProfiler::ValidateIntegerStruct(UINT_PTR ptr, IntegerStruct expe
 
 bool SlowPathELTProfiler::ValidateIntegerSseStruct(UINT_PTR ptr, IntegerSseStruct expected)
 {
-    if (ptr == NULL)
+    if (ptr == (UINT_PTR)NULL)
     {
         return false;
     }
@@ -749,7 +798,7 @@ bool SlowPathELTProfiler::ValidateIntegerSseStruct(UINT_PTR ptr, IntegerSseStruc
 
 bool SlowPathELTProfiler::ValidateSseIntegerStruct(UINT_PTR ptr, SseIntegerStruct expected)
 {
-    if (ptr == NULL)
+    if (ptr == (UINT_PTR)NULL)
     {
         return false;
     }
@@ -762,7 +811,7 @@ bool SlowPathELTProfiler::ValidateSseIntegerStruct(UINT_PTR ptr, SseIntegerStruc
 
 bool SlowPathELTProfiler::ValidateMixedSseStruct(UINT_PTR ptr, MixedSseStruct expected)
 {
-    if (ptr == NULL)
+    if (ptr == (UINT_PTR)NULL)
     {
         return false;
     }
@@ -776,7 +825,7 @@ bool SlowPathELTProfiler::ValidateMixedSseStruct(UINT_PTR ptr, MixedSseStruct ex
 
 bool SlowPathELTProfiler::ValidateSseMixedStruct(UINT_PTR ptr, SseMixedStruct expected)
 {
-    if (ptr == NULL)
+    if (ptr == (UINT_PTR)NULL)
     {
         return false;
     }
@@ -790,7 +839,7 @@ bool SlowPathELTProfiler::ValidateSseMixedStruct(UINT_PTR ptr, SseMixedStruct ex
 
 bool SlowPathELTProfiler::ValidateMixedMixedStruct(UINT_PTR ptr, MixedMixedStruct expected)
 {
-    if (ptr == NULL)
+    if (ptr == (UINT_PTR)NULL)
     {
         return false;
     }

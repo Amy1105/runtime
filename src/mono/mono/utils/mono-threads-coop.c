@@ -198,7 +198,8 @@ copy_stack_data_internal (MonoThreadInfo *info, MonoStackData *stackdata_begin, 
 #ifdef _MSC_VER
 typedef void (*CopyStackDataFunc)(MonoThreadInfo *, MonoStackData *, gconstpointer, gconstpointer);
 
-#ifdef HOST_AMD64
+#if defined(HOST_AMD64) || defined(HOST_ARM64)
+#include <intrin.h>
 #include <emmintrin.h>
 // Implementation of __builtin_unwind_init under MSVC, dumping nonvolatile registers into MonoBuiltinUnwindInfo.
 typedef struct {
@@ -206,9 +207,11 @@ typedef struct {
 	host_mgreg_t gregs [8];
 } MonoBuiltinUnwindInfo;
 
+#if defined(HOST_AMD64)
 // Defined in win64.asm
 G_EXTERN_C void
 copy_stack_data_internal_win32_wrapper (MonoThreadInfo *, MonoStackData *, MonoBuiltinUnwindInfo *, CopyStackDataFunc);
+#endif
 #else
 // Implementation of __builtin_unwind_init under MSVC, dumping nonvolatile registers into MonoBuiltinUnwindInfo.
 typedef struct {
@@ -238,8 +241,10 @@ copy_stack_data_internal_win32_wrapper (MonoThreadInfo *info, MonoStackData *sta
 static void
 copy_stack_data (MonoThreadInfo *info, MonoStackData *stackdata_begin)
 {
+#if defined(HOST_AMD64)
 	MonoBuiltinUnwindInfo unwind_info_data;
 	copy_stack_data_internal_win32_wrapper (info, stackdata_begin, &unwind_info_data, copy_stack_data_internal);
+#endif
 }
 #else
 static void
@@ -801,4 +806,25 @@ void
 mono_threads_set_runtime_startup_finished (void)
 {
 	mono_threads_is_runtime_startup_finished_hidden_do_not_modify = 1;
+}
+
+// If exception gets raised by mono_raise_exception, it will switch to GC unsafe but
+// there is no way to rebalance the GC state in case we unwind out of a MONO_ENTER_GC_SAFE/MONO_EXIT_GC_SAFE
+// block. This function makes sure thread gets back into GC unsafe mode and that cookie stack gets rebalanced
+// under checked builds. Mainly used by interpreters icall and p/invoke wrappers.
+void
+mono_threads_abort_gc_safe_region_internal (gpointer cookie)
+{
+#ifdef ENABLE_CHECKED_BUILD_GC
+	MONO_DEFINE_LAST_ERROR_RESTORE_POINT;
+	if (mono_check_mode_enabled (MONO_CHECK_MODE_GC))
+		coop_tls_pop (cookie);
+	MONO_RESTORE_LAST_ERROR_FROM_RESTORE_POINT;
+#endif
+
+	if (!mono_thread_is_gc_unsafe_mode())
+	{
+		MONO_STACKDATA (stackdata);
+		mono_threads_enter_gc_unsafe_region_unbalanced_with_info (mono_thread_info_current (), &stackdata);
+	}
 }

@@ -62,10 +62,40 @@ namespace System.Security.Cryptography.X509Certificates
 
         public ECDiffieHellman? GetECDiffieHellmanPrivateKey()
         {
+            static ECDiffieHellmanCng? FromCngKey(CngKey cngKey)
+            {
+                if (cngKey.AlgorithmGroup == CngAlgorithmGroup.ECDiffieHellman)
+                {
+                    return new ECDiffieHellmanCng(cngKey, transferOwnership: true);
+                }
+
+                // We might be getting an ECDSA key here. CNG allows ECDH to be either ECDH or ECDSA, however if
+                // the AlgorithmGroup is ECDSA, then it cannot be used for ECDH, even though both of them are ECC keys.
+                return null;
+            }
+
             return GetPrivateKey<ECDiffieHellman>(
                 csp => throw new NotSupportedException(SR.NotSupported_ECDiffieHellman_Csp),
-                cngKey => new ECDiffieHellmanCng(cngKey, transferOwnership: true)
+                FromCngKey
             );
+        }
+
+        public MLDsa? GetMLDsaPrivateKey()
+        {
+            // MLDsa is not supported on Windows.
+            return null;
+        }
+
+        public MLKem? GetMLKemPrivateKey()
+        {
+            // MLKem is not supported on Windows.
+            return null;
+        }
+
+        public SlhDsa? GetSlhDsaPrivateKey()
+        {
+            // SlhDsa is not supported on Windows.
+            return null;
         }
 
         public ICertificatePal CopyWithPrivateKey(DSA dsa)
@@ -156,6 +186,22 @@ namespace System.Security.Cryptography.X509Certificates
             }
         }
 
+        public ICertificatePal CopyWithPrivateKey(MLDsa privateKey)
+        {
+            throw new PlatformNotSupportedException(
+                SR.Format(SR.Cryptography_AlgorithmNotSupported, nameof(MLDsa)));
+        }
+
+        public ICertificatePal CopyWithPrivateKey(MLKem privateKey)
+        {
+            throw new PlatformNotSupportedException(SR.Format(SR.Cryptography_AlgorithmNotSupported, nameof(MLKem)));
+        }
+
+        public ICertificatePal CopyWithPrivateKey(SlhDsa privateKey)
+        {
+            throw new PlatformNotSupportedException(SR.Format(SR.Cryptography_AlgorithmNotSupported, nameof(SlhDsa)));
+        }
+
         public ICertificatePal CopyWithPrivateKey(RSA rsa)
         {
             RSACng? rsaCng = rsa as RSACng;
@@ -199,7 +245,7 @@ namespace System.Security.Cryptography.X509Certificates
             }
         }
 
-        private T? GetPrivateKey<T>(Func<CspParameters, T> createCsp, Func<CngKey, T> createCng) where T : AsymmetricAlgorithm
+        private T? GetPrivateKey<T>(Func<CspParameters, T> createCsp, Func<CngKey, T?> createCng) where T : AsymmetricAlgorithm
         {
             using (SafeCertContextHandle certContext = GetCertContext())
             {
@@ -207,7 +253,15 @@ namespace System.Security.Cryptography.X509Certificates
                 if (ncryptKey != null)
                 {
                     CngKey cngKey = CngKey.OpenNoDuplicate(ncryptKey, cngHandleOptions);
-                    return createCng(cngKey);
+                    T? result = createCng(cngKey);
+
+                    // Dispose of cngKey if its ownership did not transfer to the underlying algorithm.
+                    if (result is null)
+                    {
+                        cngKey.Dispose();
+                    }
+
+                    return result;
                 }
             }
 
@@ -238,9 +292,8 @@ namespace System.Security.Cryptography.X509Certificates
             SafeCertContextHandle certificateContext,
             out CngKeyHandleOpenOptions handleOptions)
         {
-            Debug.Assert(certificateContext != null, "certificateContext != null");
-            Debug.Assert(!certificateContext.IsClosed && !certificateContext.IsInvalid,
-                         "!certificateContext.IsClosed && !certificateContext.IsInvalid");
+            Debug.Assert(certificateContext != null);
+            Debug.Assert(!certificateContext.IsClosed && !certificateContext.IsInvalid);
 
             IntPtr privateKeyPtr;
 

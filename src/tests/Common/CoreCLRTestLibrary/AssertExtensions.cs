@@ -5,7 +5,10 @@
 
 using System;
 using System.Collections.Generic;
+using System.Linq;
 using System.Threading.Tasks;
+
+using Xunit.Sdk;
 
 namespace Xunit
 {
@@ -131,12 +134,50 @@ namespace Xunit
             T outerException = Assert.Throws<T>(action);
 
             if (outerException.InnerException == null)
-                Assert.True(false, string.Format("Expected '{0}.InnerException' to be '{1}', however it is null.", typeof(T), typeof(TInner)));
+                Assert.Fail(string.Format("Expected '{0}.InnerException' to be '{1}', however it is null.", typeof(T), typeof(TInner)));
 
             if (outerException.InnerException is not TInner)
-                Assert.True(false, string.Format("Expected '{0}.InnerException', to be '{1}', however, '{2}' is.", typeof(T), typeof(TInner), outerException.InnerException.GetType()));
+                Assert.Fail(string.Format("Expected '{0}.InnerException', to be '{1}', however, '{2}' is.", typeof(T), typeof(TInner), outerException.InnerException.GetType()));
 
             return (TInner)outerException.InnerException;
+        }
+
+        public static void ThrowsAny(Type firstExceptionType, Type secondExceptionType, Action action)
+        {
+            ThrowsAnyInternal(action, firstExceptionType, secondExceptionType);
+        }
+
+        private static void ThrowsAnyInternal(Action action, params Type[] exceptionTypes)
+        {
+            try
+            {
+                action();
+            }
+            catch (Exception e)
+            {
+                Type exceptionType = e.GetType();
+                if (exceptionTypes.Any(t => t.Equals(exceptionType)))
+                    return;
+
+                throw new XunitException($"Expected one of: ({string.Join<Type>(", ", exceptionTypes)}) -> Actual: ({exceptionType}): {e}"); // Log message and callstack to help diagnosis
+            }
+
+            throw new XunitException($"Expected one of: ({string.Join<Type>(", ", exceptionTypes)}) -> Actual: No exception thrown");
+        }
+
+        public static void ThrowsAny<TFirstExceptionType, TSecondExceptionType>(Action action)
+            where TFirstExceptionType : Exception
+            where TSecondExceptionType : Exception
+        {
+            ThrowsAnyInternal(action, typeof(TFirstExceptionType), typeof(TSecondExceptionType));
+        }
+
+        public static void ThrowsAny<TFirstExceptionType, TSecondExceptionType, TThirdExceptionType>(Action action)
+            where TFirstExceptionType : Exception
+            where TSecondExceptionType : Exception
+            where TThirdExceptionType : Exception
+        {
+            ThrowsAnyInternal(action, typeof(TFirstExceptionType), typeof(TSecondExceptionType), typeof(TThirdExceptionType));
         }
 
 

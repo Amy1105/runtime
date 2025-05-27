@@ -3,7 +3,9 @@
 
 using System.Diagnostics;
 using System.Diagnostics.CodeAnalysis;
+using System.Text.Json.Nodes;
 using System.Text.Json.Reflection;
+using System.Text.Json.Schema;
 
 namespace System.Text.Json.Serialization.Converters
 {
@@ -16,6 +18,7 @@ namespace System.Text.Json.Serialization.Converters
         private readonly JsonConverter _sourceConverter;
         internal override Type? KeyType => _sourceConverter.KeyType;
         internal override Type? ElementType => _sourceConverter.ElementType;
+        internal override JsonConverter? NullableElementConverter => _sourceConverter.NullableElementConverter;
 
         public override bool HandleNull { get; }
         internal override bool SupportsCreateObjectDelegate => _sourceConverter.SupportsCreateObjectDelegate;
@@ -72,5 +75,8 @@ namespace System.Text.Json.Serialization.Converters
 
         internal override void WriteNumberWithCustomHandling(Utf8JsonWriter writer, T? value, JsonNumberHandling handling)
             => _sourceConverter.WriteNumberWithCustomHandlingAsObject(writer, value, handling);
+
+        internal override JsonSchema? GetSchema(JsonNumberHandling numberHandling)
+            => _sourceConverter.GetSchema(numberHandling);
     }
 }

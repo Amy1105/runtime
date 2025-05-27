@@ -17,7 +17,7 @@ namespace System.IO.Hashing
     /// For methods that persist the computed numerical hash value as bytes,
     /// the value is written in the Big Endian byte order.
     /// </remarks>
-#if NET5_0_OR_GREATER
+#if NET
     [SkipLocalsInit]
 #endif
     public sealed unsafe class XxHash128 : NonCryptographicHashAlgorithm
@@ -38,6 +38,16 @@ namespace System.IO.Hashing
             Initialize(ref _state, (ulong)seed);
         }
 
+        /// <summary>Initializes a new instance of the <see cref="XxHash128"/> class using the state from another instance.</summary>
+        private XxHash128(State state) : base(HashLengthInBytes)
+        {
+            _state = state;
+        }
+
+        /// <summary>Returns a clone of the current instance, with a copy of the current instance's internal state.</summary>
+        /// <returns>A new instance that will produce the same sequence of values as the current instance.</returns>
+        public XxHash128 Clone() => new(_state);
+
         /// <summary>Computes the XXH128 hash of the provided <paramref name="source"/> data.</summary>
         /// <param name="source">The data to hash.</param>
         /// <returns>The XXH128 128-bit hash code of the provided data.</returns>
@@ -51,14 +61,7 @@ namespace System.IO.Hashing
         /// <exception cref="ArgumentNullException"><paramref name="source"/> is null.</exception>
         public static byte[] Hash(byte[] source, long seed)
         {
-#if NET6_0_OR_GREATER
             ArgumentNullException.ThrowIfNull(source);
-#else
-            if (source is null)
-            {
-                throw new ArgumentNullException(nameof(source));
-            }
-#endif
 
             return Hash(new ReadOnlySpan<byte>(source), seed);
         }
@@ -79,7 +82,7 @@ namespace System.IO.Hashing
         /// <param name="destination">The buffer that receives the computed 128-bit hash code.</param>
         /// <param name="seed">The seed value for this hash computation. The default is zero.</param>
         /// <returns>The number of bytes written to <paramref name="destination"/>.</returns>
-        /// <exception cref="ArgumentException"><paramref name="destination"/> is shorter than <see cref="HashLengthInBytes"/> (8 bytes).</exception>
+        /// <exception cref="ArgumentException"><paramref name="destination"/> is shorter than <see cref="HashLengthInBytes"/> (16 bytes).</exception>
         public static int Hash(ReadOnlySpan<byte> source, Span<byte> destination, long seed = 0)
         {
             if (!TryHash(source, destination, out int bytesWritten, seed))
@@ -95,7 +98,7 @@ namespace System.IO.Hashing
         /// <param name="destination">The buffer that receives the computed 128-bit hash code.</param>
         /// <param name="bytesWritten">When this method returns, contains the number of bytes written to <paramref name="destination"/>.</param>
         /// <param name="seed">The seed value for this hash computation. The default is zero.</param>
-        /// <returns><see langword="true"/> if <paramref name="destination"/> is long enough to receive the computed hash value (8 bytes); otherwise, <see langword="false"/>.</returns>
+        /// <returns><see langword="true"/> if <paramref name="destination"/> is long enough to receive the computed hash value (16 bytes); otherwise, <see langword="false"/>.</returns>
         public static bool TryHash(ReadOnlySpan<byte> source, Span<byte> destination, out int bytesWritten, long seed = 0)
         {
             if (destination.Length >= sizeof(ulong) * 2)
@@ -110,7 +113,7 @@ namespace System.IO.Hashing
             return false;
         }
 
-#if NET7_0_OR_GREATER
+#if NET
         /// <summary>Computes the XXH128 hash of the provided data.</summary>
         /// <param name="source">The data to hash.</param>
         /// <param name="seed">The seed value for this hash computation. The default is zero.</param>
@@ -197,7 +200,7 @@ namespace System.IO.Hashing
             return current;
         }
 
-#if NET7_0_OR_GREATER
+#if NET
         /// <summary>Gets the current computed hash value without modifying accumulated state.</summary>
         /// <returns>The hash value for the data already provided.</returns>
         [CLSCompliant(false)]
@@ -403,7 +406,7 @@ namespace System.IO.Hashing
                 HashInternalLoop(accumulators, source, length, secret);
 
                 return new Hash128(
-                    low64:  MergeAccumulators(accumulators, secret + SecretMergeAccsStartBytes, length * Prime64_1),
+                    low64: MergeAccumulators(accumulators, secret + SecretMergeAccsStartBytes, length * Prime64_1),
                     high64: MergeAccumulators(accumulators, secret + SecretLengthBytes - AccumulatorCount * sizeof(ulong) - SecretMergeAccsStartBytes, ~(length * Prime64_2)));
             }
         }

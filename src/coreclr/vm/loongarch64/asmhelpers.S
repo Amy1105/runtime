@@ -63,7 +63,7 @@ WRITE_BARRIER_ENTRY JIT_UpdateWriteBarrierState
 #endif
 
 #ifdef FEATURE_USE_SOFTWARE_WRITE_WATCH_FOR_GC_HEAP
-    la.local  $a2, g_sw_ww_table
+    la.local  $a2, g_write_watch_table
     ld.d  $a2, $a2, 0
 #endif
 
@@ -421,7 +421,6 @@ LEAF_ENTRY HelperMethodFrameRestoreState, _TEXT
     RestoreRegMS  30, s7
     RestoreRegMS  31, s8
     RestoreRegMS  32, fp  //NOTE: here 32 is not the real fp register number.
-    RestoreRegMS  33, tp  //NOTE: here 33 is not the real tp register number.
 LOCAL_LABEL(Done):
     // Its imperative that the return value of HelperMethodFrameRestoreState is zero
     // as it is used in the state machine to loop until it becomes zero.
@@ -455,7 +454,6 @@ LEAF_ENTRY LazyMachStateCaptureState, _TEXT
     st.d  $s7, $a1, 56
     st.d  $s8, $a1, 64
     st.d  $fp, $a1, 72
-    st.d  $tp, $a1, 80
 
     jirl  $r0, $ra, 0
 LEAF_END LazyMachStateCaptureState, _TEXT
@@ -538,19 +536,6 @@ NESTED_ENTRY VirtualMethodFixupStub, _TEXT, NoHandler
 NESTED_END VirtualMethodFixupStub, _TEXT
 #endif // FEATURE_PREJIT
 
-// void SinglecastDelegateInvokeStub(Delegate *pThis)
-LEAF_ENTRY SinglecastDelegateInvokeStub, _TEXT
-    beq  $a0, $zero, LOCAL_LABEL(LNullThis)
-
-    ld.d $t4, $a0, DelegateObject___methodPtr
-    ld.d $a0, $a0, DelegateObject___target
-    jirl  $r0, $t4, 0
-
-LOCAL_LABEL(LNullThis):
-    addi.d  $a0, $zero, CORINFO_NullReferenceException_ASM
-    b JIT_InternalThrow
-LEAF_END SinglecastDelegateInvokeStub, _TEXT
-
 // ------------------------------------------------------------------
 // ThePreStubPatch()
 LEAF_ENTRY ThePreStubPatch, _TEXT
@@ -611,25 +596,45 @@ NESTED_ENTRY TheUMEntryPrestub, _TEXT, UnhandledExceptionHandlerUnix
     EPILOG_BRANCH_REG $t4
 NESTED_END TheUMEntryPrestub, _TEXT
 
-// ------------------------------------------------------------------
-// void* JIT_GetSharedGCStaticBase(SIZE_T moduleDomainID, DWORD dwClassDomainID)
+// Make sure the `FaultingExceptionFrame_StackAlloc` is 16-byte aligned.
+#define FaultingExceptionFrame_StackAlloc (SIZEOF__FaultingExceptionFrame)
+#define FaultingExceptionFrame_FrameOffset 0
 
-LEAF_ENTRY JIT_GetSharedGCStaticBase_SingleAppDomain, _TEXT
-    // If class is not initialized, bail to C++ helper
-    addi.d $a2, $a0, DomainLocalModule__m_pDataBlob
-    add.d $a2, $a2, $a1
-    ld.b $a2, $a2, 0
-    andi  $t8, $a2, 1
-    beq  $t8, $zero, 1f //LOCAL_LABEL(JIT_GetSharedGCStaticBase_SingleAppDomain_CallHelper)
+.macro GenerateRedirectedStubWithFrame stub, target
 
-    ld.d  $a0, $a0, DomainLocalModule__m_pGCStatics
-    jirl  $r0, $ra, 0
+    //
+    // This is the primary function to which execution will be redirected to.
+    //
+    NESTED_ENTRY \stub, _TEXT, NoHandler
 
-1:
-//LOCAL_LABEL(JIT_GetSharedGCStaticBase_SingleAppDomain_CallHelper):
-    // Tail call JIT_GetSharedGCStaticBase_Helper
-    bl  JIT_GetSharedGCStaticBase_Helper
-LEAF_END JIT_GetSharedGCStaticBase_SingleAppDomain, _TEXT
+        //
+        // IN: ra: original IP before redirect
+        //
+
+        PROLOG_SAVE_REG_PAIR_INDEXED  22, 1, 16
+
+        // alloc stack for FaultingExceptionFrame.
+        addi.d  $sp, $sp, -FaultingExceptionFrame_StackAlloc
+
+        // stack must be 16 bytes aligned
+        CHECK_STACK_ALIGNMENT
+
+        // Save pointer to FEF for GetFrameFromRedirectedStubStackFrame
+        addi.d  $a0, $sp, FaultingExceptionFrame_FrameOffset
+
+        // Prepare to initialize to NULL
+        st.d    $r0, $a0, 0  // Initialize vtbl (it is not strictly necessary)
+        st.d    $r0, $a0, FaultingExceptionFrame__m_fFilterExecuted  // Initialize BOOL for personality routine
+
+        bl   C_FUNC(\target)
+        // Target should not return.
+        EMIT_BREAKPOINT
+
+    NESTED_END \stub, _TEXT
+
+.endm
+
+GenerateRedirectedStubWithFrame RedirectForThreadAbort, ThrowControlForThread
 
 // ------------------------------------------------------------------
 // ResolveWorkerChainLookupAsmStub
@@ -753,22 +758,6 @@ NESTED_ENTRY ResolveWorkerAsmStub, _TEXT, NoHandler
     EPILOG_BRANCH_REG  $t4
 NESTED_END ResolveWorkerAsmStub, _TEXT
 
-// ------------------------------------------------------------------
-// void* JIT_GetSharedNonGCStaticBaseNoCtor(SIZE_T moduleDomainID, DWORD dwClassDomainID)
-
-LEAF_ENTRY JIT_GetSharedNonGCStaticBaseNoCtor_SingleAppDomain, _TEXT
-    jirl  $r0, $ra, 0
-LEAF_END JIT_GetSharedNonGCStaticBaseNoCtor_SingleAppDomain, _TEXT
-
-// ------------------------------------------------------------------
-// void* JIT_GetSharedGCStaticBaseNoCtor(SIZE_T moduleDomainID, DWORD dwClassDomainID)
-
-LEAF_ENTRY JIT_GetSharedGCStaticBaseNoCtor_SingleAppDomain, _TEXT
-    ld.d  $a0, $a0, DomainLocalModule__m_pGCStatics
-    jirl  $r0, $ra, 0
-LEAF_END JIT_GetSharedGCStaticBaseNoCtor_SingleAppDomain, _TEXT
-
-
 #ifdef FEATURE_HIJACK
 // ------------------------------------------------------------------
 // Hijack function for functions which return a scalar type or a struct (value type)
@@ -782,15 +771,15 @@ NESTED_ENTRY OnHijackTripThread, _TEXT, NoHandler
     PROLOG_SAVE_REG_PAIR   25, 26, 32
     PROLOG_SAVE_REG_PAIR   27, 28, 48
     PROLOG_SAVE_REG_PAIR   29, 30, 64
-    PROLOG_SAVE_REG 31, 80
+    PROLOG_SAVE_REG        31,     80
 
     // save any integral return value(s)
-    st.d  $a0, $sp, 96
-    st.d  $a1, $sp, 104
+    st.d  $a0, $sp, 88
+    st.d  $a1, $sp, 96
 
-    // save any FP/HFA return value(s)
-    fst.d  $f0, $sp, 112
-    fst.d  $f1, $sp, 120
+    // save any FP return value(s)
+    fst.d  $f0, $sp, 104
+    fst.d  $f1, $sp, 112
 
     ori  $a0, $sp, 0
     bl C_FUNC(OnHijackWorker)
@@ -798,18 +787,18 @@ NESTED_ENTRY OnHijackTripThread, _TEXT, NoHandler
     // restore callee saved registers
 
     // restore any integral return value(s)
-    ld.d  $a0, $sp, 96
-    ld.d  $a1, $sp, 104
+    ld.d  $a0, $sp, 88
+    ld.d  $a1, $sp, 96
 
-    // restore any FP/HFA return value(s)
-    fst.d  $f0, $sp, 112
-    fst.d  $f1, $sp, 120
+    // restore any FP return value(s)
+    fld.d  $f0, $sp, 104
+    fld.d  $f1, $sp, 112
 
     EPILOG_RESTORE_REG_PAIR   23, 24, 16
     EPILOG_RESTORE_REG_PAIR   25, 26, 32
     EPILOG_RESTORE_REG_PAIR   27, 28, 48
     EPILOG_RESTORE_REG_PAIR   29, 30, 64
-    EPILOG_RESTORE_REG  31, 80
+    EPILOG_RESTORE_REG        31,     80
     //                              $fp,$ra
     EPILOG_RESTORE_REG_PAIR_INDEXED  22, 1, 0x80
     EPILOG_RETURN
@@ -852,14 +841,11 @@ NESTED_ENTRY CallEHFunclet, _TEXT, NoHandler
     PROLOG_SAVE_REG_PAIR   25, 26, 32
     PROLOG_SAVE_REG_PAIR   27, 28, 48
     PROLOG_SAVE_REG_PAIR   29, 30, 64
-    //                    $s8,$tp
-    PROLOG_SAVE_REG_PAIR   31, 2,  80
-    //PROLOG_SAVE_REG 31, 80
+    PROLOG_SAVE_REG        31,     80
 
     // Save the SP of this function
     st.d  $sp, $a3, 0
 
-    ld.d  $tp, $a2, -168  // offset of tp in PCONTEXT relative to S0.
     ld.d  $fp, $a2, -8  // offset of fp in PCONTEXT relative to S0.
     ld.d  $s0, $a2, 0
     ld.d  $s1, $a2, 8
@@ -869,7 +855,7 @@ NESTED_ENTRY CallEHFunclet, _TEXT, NoHandler
     ld.d  $s5, $a2, 40
     ld.d  $s6, $a2, 48
     ld.d  $s7, $a2, 56
-    ld.d  $s8, $a2, 64  // offset of fp in PCONTEXT relative to S0.
+    ld.d  $s8, $a2, 64
 
     // Invoke the funclet
     jirl $ra, $a1, 0
@@ -878,28 +864,30 @@ NESTED_ENTRY CallEHFunclet, _TEXT, NoHandler
     EPILOG_RESTORE_REG_PAIR   25, 26, 32
     EPILOG_RESTORE_REG_PAIR   27, 28, 48
     EPILOG_RESTORE_REG_PAIR   29, 30, 64
-    EPILOG_RESTORE_REG_PAIR   31,  2, 80
-    //EPILOG_RESTORE_REG  31, 80
+    EPILOG_RESTORE_REG        31,     80
     //                              $fp,$ra
     EPILOG_RESTORE_REG_PAIR_INDEXED   22, 1, 96
     EPILOG_RETURN
+
 NESTED_END CallEHFunclet, _TEXT
 
 // This helper enables us to call into a filter funclet by passing it the CallerSP to lookup the
 // frame pointer for accessing the locals in the parent method.
 NESTED_ENTRY CallEHFilterFunclet, _TEXT, NoHandler
     //                             $fp,$ra
-    PROLOG_SAVE_REG_PAIR_INDEXED   22, 1, 16
+    PROLOG_SAVE_REG_PAIR_INDEXED   22, 1, 16, 0
 
     // On entry:
     //
     // $a0 = throwable
-    // $a1 = SP of the caller of the method/funclet containing the filter
+    // $a1 = FP of main function
     // $a2 = PC to invoke
     // $a3 = address of the location where the SP of funclet's caller (i.e. this helper) should be saved.
     //
     // Save the SP of this function
-    st.d $fp, $a3, 0
+    st.d  $sp, $a3, 0
+    // Restore frame pointer
+    move  $fp, $a1
     // Invoke the filter funclet
     jirl  $ra, $a2, 0
 
@@ -940,28 +928,43 @@ LEAF_END setFPReturn, _TEXT
 
 #endif // FEATURE_COMINTEROP
 
-//
-// JIT Static access helpers when coreclr host specifies single appdomain flag
-//
+// ------------------------------------------------------------------
+// void* JIT_GetDynamicNonGCStaticBase(DynamicStaticsInfo* pStaticsInfo)
+
+LEAF_ENTRY JIT_GetDynamicNonGCStaticBase_SingleAppDomain, _TEXT
+    // If class is not initialized, bail to C++ helper
+    ld.d $a1, $a0, OFFSETOF__DynamicStaticsInfo__m_pNonGCStatics
+    dbar 0
+    bnez $a1, LOCAL_LABEL(JIT_GetDynamicNonGCStaticBase_SingleAppDomain_CallHelper)
+    ori  $a0, $a1, 0
+    jirl $r0, $ra, 0
+
+LOCAL_LABEL(JIT_GetDynamicNonGCStaticBase_SingleAppDomain_CallHelper):
+    // Tail call GetNonGCStaticBase
+    ld.d $a0, $a0, OFFSETOF__DynamicStaticsInfo__m_pMethodTable
+    PREPARE_EXTERNAL_VAR g_pGetNonGCStaticBase, $t4
+    ld.d $t4, $t4, 0
+    EPILOG_BRANCH_REG        $t4
+LEAF_END JIT_GetDynamicNonGCStaticBase_SingleAppDomain, _TEXT
 
 // ------------------------------------------------------------------
-// void* JIT_GetSharedNonGCStaticBase(SIZE_T moduleDomainID, DWORD dwClassDomainID)
+// void* JIT_GetDynamicGCStaticBase(DynamicStaticsInfo* pStaticsInfo)
 
-LEAF_ENTRY JIT_GetSharedNonGCStaticBase_SingleAppDomain, _TEXT
+LEAF_ENTRY JIT_GetDynamicGCStaticBase_SingleAppDomain, _TEXT
     // If class is not initialized, bail to C++ helper
-    //dext $a1, $a1, 0, 32
-    addi.d  $a2, $a0, DomainLocalModule__m_pDataBlob
+    ld.d $a1, $a0, OFFSETOF__DynamicStaticsInfo__m_pGCStatics
+    dbar 0
+    bnez $a1, LOCAL_LABEL(JIT_GetDynamicGCStaticBase_SingleAppDomain_CallHelper)
+    ori  $a0, $a1, 0
+    jirl $r0, $ra, 0
 
-    ldx.b $a2, $a2, $a1
-    andi  $t4, $a2, 1
-    beq  $t4, $zero, LOCAL_LABEL(JIT_GetSharedNonGCStaticBase_SingleAppDomain_CallHelper)
-
-    jirl  $r0, $ra, 0
-
-LOCAL_LABEL(JIT_GetSharedNonGCStaticBase_SingleAppDomain_CallHelper):
-    // Tail call JIT_GetSharedNonGCStaticBase_Helper
-    b  JIT_GetSharedNonGCStaticBase_Helper
-LEAF_END JIT_GetSharedNonGCStaticBase_SingleAppDomain, _TEXT
+LOCAL_LABEL(JIT_GetDynamicGCStaticBase_SingleAppDomain_CallHelper):
+    // Tail call GetGCStaticBase
+    ld.d $a0, $a0, OFFSETOF__DynamicStaticsInfo__m_pMethodTable
+    PREPARE_EXTERNAL_VAR g_pGetGCStaticBase, $t4
+    ld.d $t4, $t4, 0
+    EPILOG_BRANCH_REG        $t4
+LEAF_END JIT_GetDynamicGCStaticBase_SingleAppDomain, _TEXT
 
 #ifdef FEATURE_READYTORUN
 
@@ -979,7 +982,6 @@ C_FUNC(DelayLoad_MethodCall):
     ori  $t4,$a0,0
 
     EPILOG_WITH_TRANSITION_BLOCK_TAILCALL
-    PATCH_LABEL ExternalMethodFixupPatchLabel
     EPILOG_BRANCH_REG   $t4
 NESTED_END DelayLoad_MethodCall_FakeProlog, _TEXT
 
@@ -1027,12 +1029,6 @@ LEAF_ENTRY JIT_ProfilerEnterLeaveTailcallStub, _TEXT
 LEAF_END JIT_ProfilerEnterLeaveTailcallStub, _TEXT
 
 // ------------------------------------------------------------------
-#define PROFILE_ENTER    1
-#define PROFILE_LEAVE    2
-#define PROFILE_TAILCALL 4
-#define SIZEOF__PROFILE_PLATFORM_SPECIFIC_DATA 272
-
-// ------------------------------------------------------------------
 .macro GenerateProfileHelper helper, flags
 NESTED_ENTRY \helper\()Naked, _TEXT, NoHandler
     // On entry:
@@ -1044,27 +1040,27 @@ NESTED_ENTRY \helper\()Naked, _TEXT, NoHandler
     //   Values of $a0-$a7, $fa0-$fa7, $fp are preserved.
     //   Values of other volatile registers are not preserved.
 
-    //                           $fp,$ra
+    //                          $fp,$ra
     PROLOG_SAVE_REG_PAIR_INDEXED 22, 1, SIZEOF__PROFILE_PLATFORM_SPECIFIC_DATA // Allocate space and save Fp, Pc.
-    SAVE_ARGUMENT_REGISTERS $sp, 16          // Save $t0 and argument registers ($a0-$a7).
-    st.d     $zero, $sp, 88                   // Clear functionId.
-    SAVE_FLOAT_ARGUMENT_REGISTERS $sp, 96    // Save floating-point/SIMD registers ($fa0-$fa7).
-    addi.d     $t3, $fp, SIZEOF__PROFILE_PLATFORM_SPECIFIC_DATA // Compute probeSp - initial value of Sp on entry to the helper.
-    st.d     $t3, $sp, 224             // Save probeSp.
-    st.d     $t2, $sp, 232             // Save profiledSp.
 
-    st.d    $zero, $sp, 240            // Clear hiddenArg.
-    addi.d  $t3, $zero, \flags
-    st.w    $t3, $sp, 248              // Save flags.
-    st.d    $zero, $sp, 256            // clear unused field.
+    SAVE_ARGUMENT_REGISTERS       $sp, PROFILE_PLATFORM_SPECIFIC_DATA__argumentRegisters
+    SAVE_FLOAT_ARGUMENT_REGISTERS $sp, PROFILE_PLATFORM_SPECIFIC_DATA__floatArgumentRegisters
+    st.d    $zero, $sp, PROFILE_PLATFORM_SPECIFIC_DATA__functionId
+    addi.d  $t3, $sp, SIZEOF__PROFILE_PLATFORM_SPECIFIC_DATA // Compute probeSp - initial value of Sp on entry to the helper.
+    st.d    $t3, $sp, PROFILE_PLATFORM_SPECIFIC_DATA__probeSp
+    st.d    $t2, $sp, PROFILE_PLATFORM_SPECIFIC_DATA__profiledSp
 
-    ori     $a1, $t1, 0
-    ori     $a2, $sp, 0
+    st.d    $zero, $sp, PROFILE_PLATFORM_SPECIFIC_DATA__hiddenArg
+    addi.w  $t3, $zero, \flags
+    st.w    $t3, $sp, PROFILE_PLATFORM_SPECIFIC_DATA__flags
+
+    ori     $a0, $t1, 0
+    ori     $a1, $sp, 0
     bl      C_FUNC(\helper)
 
-    RESTORE_ARGUMENT_REGISTERS $sp, 16       // Restore $t0 and argument registers.
-    RESTORE_FLOAT_ARGUMENT_REGISTERS $sp, 96 // Restore floating-point/SIMD registers.
-    //                              $fp, $ra
+    RESTORE_ARGUMENT_REGISTERS       $sp, PROFILE_PLATFORM_SPECIFIC_DATA__argumentRegisters
+    RESTORE_FLOAT_ARGUMENT_REGISTERS $sp, PROFILE_PLATFORM_SPECIFIC_DATA__floatArgumentRegisters
+    //                             $fp, $ra
     EPILOG_RESTORE_REG_PAIR_INDEXED 22, 1, SIZEOF__PROFILE_PLATFORM_SPECIFIC_DATA
     EPILOG_RETURN
 
@@ -1083,7 +1079,7 @@ GenerateProfileHelper ProfileTailcall, PROFILE_TAILCALL
 NESTED_ENTRY OnCallCountThresholdReachedStub, _TEXT, NoHandler
     PROLOG_WITH_TRANSITION_BLOCK
 
-    addi.d     $a0, $sp, __PWTB_TransitionBlock // TransitionBlock *
+    addi.d  $a0, $sp, __PWTB_TransitionBlock // TransitionBlock *
     ori     $a1, $t1, 0 // stub-identifying token
     bl      C_FUNC(OnCallCountThresholdReached)
     ori     $t4,$a0,0
@@ -1091,6 +1087,22 @@ NESTED_ENTRY OnCallCountThresholdReachedStub, _TEXT, NoHandler
     EPILOG_WITH_TRANSITION_BLOCK_TAILCALL
     EPILOG_BRANCH_REG $t4
 NESTED_END OnCallCountThresholdReachedStub, _TEXT
+
+NESTED_ENTRY JIT_Patchpoint, _TEXT, NoHandler
+    PROLOG_WITH_TRANSITION_BLOCK
+
+    addi.d  $a0, $sp, __PWTB_TransitionBlock // TransitionBlock *
+    bl      C_FUNC(JIT_PatchpointWorkerWorkerWithPolicy)
+
+    EPILOG_WITH_TRANSITION_BLOCK_RETURN
+NESTED_END JIT_Patchpoint, _TEXT
+
+// first arg register holds iloffset, which needs to be moved to the second register, and the first register filled with NULL
+LEAF_ENTRY JIT_PatchpointForced, _TEXT
+    move    $a1, $a0
+    li.d    $a0, 0
+    b C_FUNC(JIT_Patchpoint)
+LEAF_END JIT_PatchpointForced, _TEXT
 
 #endif // FEATURE_TIERED_COMPILATION
 
@@ -1102,8 +1114,44 @@ NESTED_END OnCallCountThresholdReachedStub, _TEXT
 
 LEAF_ENTRY GetThreadStaticsVariableOffset, _TEXT
         PROLOG_SAVE_REG_PAIR_INDEXED   22, 1, 16
-        la.tls.ie   $a0, t_ThreadStatics
+        la.tls.desc   $a0, t_ThreadStatics
         EPILOG_RESTORE_REG_PAIR_INDEXED 22, 1, 16
         EPILOG_RETURN
 LEAF_END GetThreadStaticsVariableOffset, _TEXT
 // ------------------------------------------------------------------
+
+// ------------------------------------------------------------------
+// size_t GetTLSResolverAddress()
+
+// Helper to get the TLS resolver address. This will be then used to determine if we have a static or dynamic resolver.
+LEAF_ENTRY GetTLSResolverAddress, _TEXT
+        //                           $fp,$ra
+        PROLOG_SAVE_REG_PAIR_INDEXED  22, 1, 16
+        pcalau12i  $a0, %desc_pc_hi20(t_ThreadStatics)
+        addi.d     $a0, $a0, %desc_pc_lo12(t_ThreadStatics)
+        ld.d       $a0, $a0, %desc_ld(t_ThreadStatics)
+        EPILOG_RESTORE_REG_PAIR_INDEXED  22, 1, 16
+        EPILOG_RETURN
+LEAF_END GetTLSResolverAddress, _TEXT
+// ------------------------------------------------------------------
+
+LEAF_ENTRY JIT_PollGC, _TEXT
+        PREPARE_EXTERNAL_VAR g_TrapReturningThreads, $t0
+        ld.w    $t0, $t0, 0
+        bne     $t0, $zero, LOCAL_LABEL(JIT_PollGCRarePath)
+        jirl $r0, $ra, 0
+LOCAL_LABEL(JIT_PollGCRarePath):
+        PREPARE_EXTERNAL_VAR g_pPollGC, $t0
+        ld.d    $t0, $t0, 0
+        EPILOG_BRANCH_REG $t0
+LEAF_END JIT_PollGC, _TEXT
+
+//a0 -This pointer
+//a1 -ReturnBuffer
+LEAF_ENTRY ThisPtrRetBufPrecodeWorker, _TEXT
+    ld.d  $METHODDESC_REGISTER, $METHODDESC_REGISTER, ThisPtrRetBufPrecodeData__Target
+    move  $t0, $a0     // Move first arg pointer to temp register
+    move  $a0, $a1     // Move ret buf arg pointer from location in ABI for return buffer for instance method to location in ABI for return buffer for static method
+    move  $a1, $t0     // Move temp register to first arg register for static method with return buffer
+    EPILOG_BRANCH_REG $METHODDESC_REGISTER
+LEAF_END ThisPtrRetBufPrecodeWorker, _TEXT

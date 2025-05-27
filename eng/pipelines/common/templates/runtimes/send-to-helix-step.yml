@@ -17,9 +17,9 @@ parameters:
   timeoutPerTestCollectionInMinutes: ''
   timeoutPerTestInMinutes: ''
   runCrossGen2: ''
-  runPALTestsDir: ''
   compositeBuildMode: false
   helixProjectArguments: ''
+  extraHelixArguments: ''
   runInUnloadableContext: ''
   tieringTest: ''
   hotColdSplitting: ''
@@ -30,6 +30,7 @@ parameters:
   runtimeVariant: ''
   shouldContinueOnError: false
   SuperPmiCollect: ''
+  SuperPmiReplayType: ''
   SuperPmiDiffType: ''
   SuperPmiBaseJitOptions: ''
   SuperPmiDiffJitOptions: ''
@@ -39,8 +40,7 @@ steps:
 - template: send-to-helix-inner-step.yml
   parameters:
     osGroup: ${{ parameters.osGroup }}
-    restoreParams: /p:DotNetPublishToBlobFeed=true -restore -projects $(Build.SourcesDirectory)$(dir)eng$(dir)empty.csproj
-    sendParams: ${{ parameters.helixProjectArguments }} ${{ parameters.msbuildParallelism }} /bl:$(Build.SourcesDirectory)/artifacts/log/SendToHelix.binlog /p:TargetArchitecture=${{ parameters.archType }} /p:TargetOS=${{ parameters.osGroup }} /p:TargetOSSubgroup=${{ parameters.osSubgroup }} /p:Configuration=${{ parameters.buildConfig }}
+    sendParams: ${{ parameters.helixProjectArguments }} ${{ parameters.msbuildParallelism }} /bl:$(Build.SourcesDirectory)/artifacts/log/SendToHelix.binlog /p:TargetArchitecture=${{ parameters.archType }} /p:TargetOS=${{ parameters.osGroup }} /p:TargetOSSubgroup=${{ parameters.osSubgroup }} /p:Configuration=${{ parameters.buildConfig }} ${{ parameters.extraHelixArguments }}
     condition: and(succeeded(), ${{ parameters.condition }})
     shouldContinueOnError: ${{ parameters.shouldContinueOnError }}
     displayName: ${{ parameters.displayName }}
@@ -61,12 +61,12 @@ steps:
       _LongRunningGcTests: ${{ parameters.longRunningGcTests }}
       _GcSimulatorTests: ${{ parameters.gcSimulatorTests }}
       _Scenarios: ${{ join(',', parameters.scenarios) }}
-      _PALTestsDir: ${{ parameters.runPALTestsDir }}
       _TimeoutPerTestCollectionInMinutes: ${{ parameters.timeoutPerTestCollectionInMinutes }}
       _TimeoutPerTestInMinutes: ${{ parameters.timeoutPerTestInMinutes }}
       RuntimeFlavor: ${{ parameters.runtimeFlavor }}
       _RuntimeVariant: ${{ parameters.runtimeVariant }}
       _SuperPmiCollect: ${{ parameters.SuperPmiCollect }}
+      _SuperPmiReplayType: ${{ parameters.SuperPmiReplayType }}
       _SuperPmiDiffType: ${{ parameters.SuperPmiDiffType }}
       _SuperPmiBaseJitOptions: ${{ parameters.SuperPmiBaseJitOptions }}
       _SuperPmiDiffJitOptions: ${{ parameters.SuperPmiDiffJitOptions }}

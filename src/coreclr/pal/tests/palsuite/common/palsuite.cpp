@@ -12,6 +12,7 @@
 
 
 #include "palsuite.h"
+#include "minipal/time.h"
 
 const char* szTextFile = "text.txt";
 
@@ -49,17 +50,6 @@ char* convertC(const WCHAR * wString)
     }
     WideCharToMultiByte(CP_ACP,0,wString,-1,MultiBuffer,size,NULL,NULL);
     return MultiBuffer;
-}
-
-UINT64 GetHighPrecisionTimeStamp(LARGE_INTEGER performanceFrequency)
-{
-    LARGE_INTEGER ts;
-    if (!QueryPerformanceCounter(&ts))
-    {
-        Fail("ERROR: Unable to query performance counter!\n");      
-    }
-    
-    return ts.QuadPart / (performanceFrequency.QuadPart / 1000);    
 }
 
 static const char* rgchPathDelim = "/";
@@ -154,7 +144,7 @@ mkAbsoluteFilenameW (
     sizeFN = wcslen( fileName );
     sizeAPN = (sizeDN + 1 + sizeFN + 1);
 
-    /* insure ((dirName + DELIM + fileName + \0) =< _MAX_PATH ) */
+    /* ensure ((dirName + DELIM + fileName + \0) =< _MAX_PATH ) */
     if ( sizeAPN > _MAX_PATH )
     {
 	return ( 0 );
@@ -195,7 +185,7 @@ mkAbsoluteFilenameA (
     sizeFN = strlen( fileName );
     sizeAPN = (sizeDN + 1 + sizeFN + 1);
     
-    /* insure ((dirName + DELIM + fileName + \0) =< _MAX_PATH ) */
+    /* ensure ((dirName + DELIM + fileName + \0) =< _MAX_PATH ) */
     if ( sizeAPN > _MAX_PATH )
     {
         return ( 0 );

@@ -79,19 +79,12 @@
 
         PROLOG_PUSH  "{r4, lr}"
 
-        ldr     r1, =s_gsCookie-(1f+4)
-1:
-        add     r1, pc
-        ldr     r1, [r1]
-        str     r1, [r0]
-        add     r4, r0, SIZEOF__GSCookie
+        mov     r4, r0
 
         // r4 = pFrame
 
-        // set first slot to the value of InlinedCallFrame::`vftable' (checked by runtime code)
-        ldr     r1, =_ZTV16InlinedCallFrame+8-(2f+4)
-2:
-        add     r1, pc
+        // set first slot to the value of InlinedCallFrame identifier (checked by runtime code)
+        mov     r1, #FRAMETYPE_InlinedCallFrame
         str     r1, [r4]
 
         mov     r1, 0
@@ -130,7 +123,6 @@
 //
     LEAF_ENTRY JIT_PInvokeEnd, _TEXT
 
-        add     r0, r0, SIZEOF__GSCookie
         ldr     r1, [r0, #InlinedCallFrame__m_pThread]
 
         // r0 = pFrame
@@ -141,9 +133,13 @@
         str     r2, [r1, #Thread_m_fPreemptiveGCDisabled]
 
         // Check return trap
+#if defined(__clang__)
         ldr     r2, =g_TrapReturningThreads-(1f+4)
 1:
         add     r2, pc
+#else
+        ldr     r2, =g_TrapReturningThreads
+#endif
         ldr     r2, [r2]
         cbnz    r2, LOCAL_LABEL(RarePath)
 
@@ -157,6 +153,42 @@ LOCAL_LABEL(RarePath):
         b       C_FUNC(JIT_PInvokeEndRarePath)
 
     LEAF_END JIT_PInvokeEnd, _TEXT
+
+// ------------------------------------------------------------------
+// IN:
+// InlinedCallFrame (r4) = pointer to the InlinedCallFrame data
+// OUT:
+// Thread (r5) = pointer to Thread
+//
+//
+    LEAF_ENTRY JIT_InitPInvokeFrame, _TEXT
+
+        PROLOG_PUSH  "{r0-r4, lr}"
+
+        bl      C_FUNC(GetThreadHelper)
+        mov     r5, r0
+
+        // set first slot to the value of InlinedCallFrame identifier (checked by runtime code)
+        mov     r6, #FRAMETYPE_InlinedCallFrame
+        str     r6, [r4]
+
+        // pFrame->m_Next = pThread->m_pFrame;
+        ldr     r6, [r5, #Thread_m_pFrame]
+        str     r6, [r4, #Frame__m_Next]
+
+        str     r11, [r4, #InlinedCallFrame__m_pCalleeSavedFP]
+        str     r9, [r4, #InlinedCallFrame__m_pSPAfterProlog]
+        mov     r6, 0
+        str     r6, [r4, #InlinedCallFrame__m_pCallerReturnAddress]
+        add     r6, sp, 24
+        str     r6, [r4, #InlinedCallFrame__m_pCallSiteSP]
+
+        // pThread->m_pFrame = pFrame;
+        str     r4, [r5, #Thread_m_pFrame]
+
+        EPILOG_POP   "{r0-r4, pc}"
+
+    LEAF_END JIT_InitPInvokeFrame, _TEXT
 
 // ------------------------------------------------------------------
 // VarargPInvokeStub & VarargPInvokeGenILStub

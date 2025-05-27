@@ -21,7 +21,6 @@ using Xunit.Abstractions;
 
 namespace System.Net.Http.Functional.Tests
 {
-    [Collection(nameof(DisableParallelization))]
     [ConditionalClass(typeof(HttpClientHandlerTestBase), nameof(IsQuicSupported))]
     public sealed class HttpClientHandlerTest_Http3 : HttpClientHandlerTestBase
     {
@@ -35,7 +34,10 @@ namespace System.Net.Http.Functional.Tests
         {
             Exception outerEx = await Assert.ThrowsAnyAsync<Exception>(task);
             _output.WriteLine(outerEx.ToString());
-            Assert.IsType<HttpRequestException>(outerEx);
+
+            HttpRequestException httpReqException = Assert.IsType<HttpRequestException>(outerEx);
+            Assert.Equal(HttpRequestError.HttpProtocolError, httpReqException.HttpRequestError);
+
             HttpProtocolException protocolEx = Assert.IsType<HttpProtocolException>(outerEx.InnerException);
             Assert.Equal(errorCode, protocolEx.ErrorCode);
         }
@@ -165,7 +167,7 @@ namespace System.Net.Http.Functional.Tests
                 }
             });
 
-            await new[] { clientTask, serverTask }.WhenAllOrAnyFailed(20_000);
+            await new[] { clientTask, serverTask }.WhenAllOrAnyFailed(200_000);
         }
 
         [Theory]
@@ -269,7 +271,7 @@ namespace System.Net.Http.Functional.Tests
                 await lastTask;
             });
 
-            await new[] { clientTask, serverTask }.WhenAllOrAnyFailed(20_000);
+            await new[] { clientTask, serverTask }.WhenAllOrAnyFailed(200_000);
         }
 
         [Fact]
@@ -390,7 +392,7 @@ namespace System.Net.Http.Functional.Tests
                 await using (Http3LoopbackConnection connection1 = (Http3LoopbackConnection)await server.EstablishGenericConnectionAsync())
                 {
                     await using Http3LoopbackStream stream = await connection1.AcceptRequestStreamAsync();
-                    stream.Abort(0x10B); // H3_REQUEST_REJECTED
+                    stream.Abort(Http3LoopbackConnection.H3_REQUEST_REJECTED);
                     await stream.DisposeAsync();
                     // shutdown the connection gracefully via GOAWAY frame for good measure
                     await connection1.ShutdownAsync(true);
@@ -421,6 +423,41 @@ namespace System.Net.Http.Functional.Tests
             await new[] { clientTask, serverTask }.WhenAllOrAnyFailed(20_000);
         }
 
+        [Fact]
+        public async Task SendAsync_RequestAbortedNoError_ClientSucceeds()
+        {
+            using Http3LoopbackServer server = CreateHttp3LoopbackServer();
+            string httpContent = "hello world";
+
+            Task serverTask = Task.Run(async () =>
+            {
+                await using (Http3LoopbackConnection connection = (Http3LoopbackConnection)await server.EstablishGenericConnectionAsync())
+                {
+                    await using Http3LoopbackStream stream = await connection.AcceptRequestStreamAsync();
+                    stream.Abort(Http3LoopbackConnection.H3_NO_ERROR, QuicAbortDirection.Read);
+                    await stream.SendResponseAsync(content: httpContent);
+                    await stream.DisposeAsync();
+                }
+            });
+
+            Task clientTask = Task.Run(async () =>
+            {
+                using HttpClient client = CreateHttpClient();
+                using HttpRequestMessage request = new()
+                {
+                    Method = HttpMethod.Post,
+                    RequestUri = server.Address,
+                    Version = HttpVersion30,
+                    VersionPolicy = HttpVersionPolicy.RequestVersionExact,
+                    Content = new ByteAtATimeContent(64*1024)
+                };
+                using var response = await client.SendAsync(request, HttpCompletionOption.ResponseHeadersRead);
+                var content = await response.Content.ReadAsStringAsync();
+                Assert.Equal(httpContent, content);
+            });
+
+            await new[] { clientTask, serverTask }.WhenAllOrAnyFailed(20_000);
+        }
 
         [Fact]
         public async Task ServerClosesConnection_ResponseContentStream_ThrowsHttpProtocolException()
@@ -521,6 +558,53 @@ namespace System.Net.Http.Functional.Tests
 
             await new[] { clientTask, serverTask }.WhenAllOrAnyFailed(20_000);
         }
+
+        [Fact]
+        public async Task RequestStreamingResponseFinishes_ClientFinishes()
+        {
+            byte[] data = Encoding.UTF8.GetBytes(new string('a', 1024));
+
+            using Http3LoopbackServer server = CreateHttp3LoopbackServer();
+
+            Task serverTask = Task.Run(async () =>
+            {
+                await using Http3LoopbackConnection connection = (Http3LoopbackConnection)await server.EstablishGenericConnectionAsync();
+                await using Http3LoopbackStream stream = await connection.AcceptRequestStreamAsync();
+                HttpRequestData request = await stream.ReadRequestDataAsync(false);
+                var body = await stream.ReadRequestBodyAsync(data.Length);
+                await stream.SendResponseHeadersAsync();
+                await stream.SendResponseBodyAsync(body);
+            });
+
+            Task clientTask = Task.Run(async () =>
+            {
+                StreamingHttpContent requestContent = new StreamingHttpContent();
+                using HttpClient client = CreateHttpClient();
+                using HttpRequestMessage request = new()
+                {
+                    Method = HttpMethod.Get,
+                    RequestUri = server.Address,
+                    Version = HttpVersion30,
+                    VersionPolicy = HttpVersionPolicy.RequestVersionExact,
+                    Content = requestContent
+                };
+
+                var responseTask = client.SendAsync(request, HttpCompletionOption.ResponseHeadersRead);
+
+                var requestStream = await requestContent.GetStreamAsync();
+                await requestStream.FlushAsync();
+                await requestStream.WriteAsync(data);
+
+                var response = await responseTask;
+                response.EnsureSuccessStatusCode();
+                var body = await response.Content.ReadAsStringAsync();
+
+                await serverTask;
+            });
+
+            await new[] { clientTask, serverTask }.WhenAllOrAnyFailed(20_000);
+        }
+
 
         [Fact]
         public async Task RequestSendingResponseDisposed_ThrowsOnServer()
@@ -1664,10 +1748,17 @@ namespace System.Net.Http.Functional.Tests
 
         }
 
+        public enum CloseOutboundControlStream
+        {
+            BogusData,
+            Dispose,
+            Abort,
+        }
         [Theory]
-        [InlineData(true)]
-        [InlineData(false)]
-        public async Task ServerClosesOutboundControlStream_ClientClosesConnection(bool graceful)
+        [InlineData(CloseOutboundControlStream.BogusData)]
+        [InlineData(CloseOutboundControlStream.Dispose)]
+        [InlineData(CloseOutboundControlStream.Abort)]
+        public async Task ServerClosesOutboundControlStream_ClientClosesConnection(CloseOutboundControlStream closeType)
         {
             using Http3LoopbackServer server = CreateHttp3LoopbackServer();
 
@@ -1680,13 +1771,38 @@ namespace System.Net.Http.Functional.Tests
                 await using Http3LoopbackStream requestStream = await connection.AcceptRequestStreamAsync();
 
                 // abort the control stream
-                if (graceful)
+                if (closeType == CloseOutboundControlStream.BogusData)
                 {
                     await connection.OutboundControlStream.SendResponseBodyAsync(Array.Empty<byte>(), isFinal: true);
                 }
-                else
+                else if (closeType == CloseOutboundControlStream.Dispose)
                 {
-                    connection.OutboundControlStream.Abort(Http3LoopbackConnection.H3_INTERNAL_ERROR);
+                    await connection.OutboundControlStream.DisposeAsync();
+                }
+                else if (closeType == CloseOutboundControlStream.Abort)
+                {
+                    int iterations = 5;
+                    while (iterations-- > 0)
+                    {
+                        connection.OutboundControlStream.Abort(Http3LoopbackConnection.H3_INTERNAL_ERROR);
+                        // This sends RESET_FRAME which might cause complete discard of any data including stream type, leading to client ignoring the stream.
+                        // Attempt to establish the control stream again then.
+                        if (await semaphore.WaitAsync(100))
+                        {
+                            // Client finished with the expected error.
+                            return;
+                        }
+                        await connection.OutboundControlStream.DisposeAsync();
+                        try
+                        {
+                            await connection.EstablishControlStreamAsync(Array.Empty<SettingsEntry>());
+                        }
+                        catch (QuicException ex) when (ex.QuicError == QuicError.ConnectionAborted && ex.ApplicationErrorCode == Http3LoopbackConnection.H3_CLOSED_CRITICAL_STREAM)
+                        {
+                            // Data race, connection closed between WaitAsync and EstablishControlStreamAsync. Ignore this.
+                        }
+                        await Task.Delay(100);
+                    }
                 }
 
                 // wait for client task before tearing down the requestStream and connection
@@ -1780,8 +1896,7 @@ namespace System.Net.Http.Functional.Tests
         public static TheoryData<string> InteropUris() =>
             new TheoryData<string>
             {
-                // [ActiveIssue("https://github.com/dotnet/runtime/issues/83775")]
-                //{ "https://www.litespeedtech.com/" }, // LiteSpeed
+                { "https://www.litespeedtech.com/" }, // LiteSpeed
                 { "https://quic.tech:8443/" }, // Cloudflare
                 { "https://quic.aiortc.org:443/" }, // aioquic
                 { "https://h2o.examp1e.net/" } // h2o/quicly

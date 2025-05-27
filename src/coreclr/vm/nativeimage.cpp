@@ -131,7 +131,7 @@ NativeImage *NativeImage::Open(
         }
     }
 
-    SString path = componentModule->GetPath();
+    SString path{ componentModule->GetPath() };
     SString::Iterator lastPathSeparatorIter = path.End();
     size_t pathDirLength = 0;
     if (PEAssembly::FindLastPathSeparator(path, lastPathSeparatorIter))
@@ -142,19 +142,19 @@ NativeImage *NativeImage::Open(
     SString compositeImageFileName(SString::Utf8, nativeImageFileName);
     SString fullPath;
     fullPath.Set(path, path.Begin(), (COUNT_T)pathDirLength);
-    fullPath += compositeImageFileName;
+    fullPath.Append(compositeImageFileName);
     LPWSTR searchPathsConfig;
     IfFailThrow(CLRConfig::GetConfigValue(CLRConfig::INTERNAL_NativeImageSearchPaths, &searchPathsConfig));
 
     PEImageLayoutHolder peLoadedImage;
 
-    BundleFileLocation bundleFileLocation = Bundle::ProbeAppBundle(fullPath, /*pathIsBundleRelative */ true);
-    if (bundleFileLocation.IsValid())
+    ProbeExtensionResult probeExtensionResult = AssemblyProbeExtension::Probe(fullPath, /*pathIsBundleRelative */ true);
+    if (probeExtensionResult.IsValid())
     {
         // No need to use cache for this PE image.
         // Composite r2r PE image is not a part of anyone's identity.
         // We only need it to obtain the native image, which will be cached at AppDomain level.
-        PEImageHolder pImage = PEImage::OpenImage(fullPath, MDInternalImport_NoCache, bundleFileLocation);
+        PEImageHolder pImage = PEImage::OpenImage(fullPath, MDInternalImport_NoCache, probeExtensionResult);
         PEImageLayout* loaded = pImage->GetOrCreateLayout(PEImageLayout::LAYOUT_LOADED);
         // We will let pImage instance be freed after exiting this scope, but we will keep the layout,
         // thus the layout needs an AddRef, or it will be gone together with pImage.
@@ -194,7 +194,7 @@ NativeImage *NativeImage::Open(
                 }
 
                 fullPath.Append(DIRECTORY_SEPARATOR_CHAR_W);
-                fullPath += compositeImageFileName;
+                fullPath.Append(compositeImageFileName);
 
                 EX_TRY
                 {
@@ -261,7 +261,7 @@ NativeImage *NativeImage::Open(
 #endif
 
 #ifndef DACCESS_COMPILE
-Assembly *NativeImage::LoadManifestAssembly(uint32_t rowid, DomainAssembly *pParentAssembly)
+Assembly *NativeImage::LoadManifestAssembly(uint32_t rowid, Assembly *pParentAssembly)
 {
     STANDARD_VM_CONTRACT;
 

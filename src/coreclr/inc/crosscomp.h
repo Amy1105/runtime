@@ -17,7 +17,7 @@
 #define MAKE_TARGET_DLLNAME_W(name) name W(".dll")
 #define MAKE_TARGET_DLLNAME_A(name) name ".dll"
 #else // TARGET_WINDOWS
-#ifdef TARGET_OSX
+#ifdef TARGET_APPLE
 #define MAKE_TARGET_DLLNAME_W(name) W("lib") name W(".dylib")
 #define MAKE_TARGET_DLLNAME_A(name)  "lib" name  ".dylib"
 #else
@@ -282,7 +282,8 @@ typedef struct DECLSPEC_ALIGN(16) _T_CONTEXT {
 } T_CONTEXT, *PT_CONTEXT;
 
 // _IMAGE_ARM64_RUNTIME_FUNCTION_ENTRY (see ExternalAPIs\Win9CoreSystem\inc\winnt.h)
-typedef struct _T_RUNTIME_FUNCTION {
+#ifdef HOST_UNIX
+typedef struct _IMAGE_ARM64_RUNTIME_FUNCTION_ENTRY {
     DWORD BeginAddress;
     union {
         DWORD UnwindData;
@@ -294,12 +295,11 @@ typedef struct _T_RUNTIME_FUNCTION {
             DWORD H : 1;
             DWORD CR : 2;
             DWORD FrameSize : 9;
-        } PackedUnwindData;
+        };
     };
-} T_RUNTIME_FUNCTION, *PT_RUNTIME_FUNCTION;
+} IMAGE_ARM64_RUNTIME_FUNCTION_ENTRY, * PIMAGE_ARM64_RUNTIME_FUNCTION_ENTRY;
 
 
-#ifdef HOST_UNIX
 
 typedef
 EXCEPTION_DISPOSITION
@@ -310,6 +310,8 @@ EXCEPTION_DISPOSITION
     PVOID DispatcherContext
     );
 #endif
+
+typedef IMAGE_ARM64_RUNTIME_FUNCTION_ENTRY T_RUNTIME_FUNCTION, * PT_RUNTIME_FUNCTION;
 //
 // Define exception dispatch context structure.
 //
@@ -504,7 +506,6 @@ typedef struct _T_KNONVOLATILE_CONTEXT_POINTERS {
     PDWORD64 S7;
     PDWORD64 S8;
     PDWORD64 Fp;
-    PDWORD64 Tp;
     PDWORD64 Ra;
 
     PDWORD64 F24;
@@ -666,6 +667,36 @@ typedef struct _T_KNONVOLATILE_CONTEXT_POINTERS {
 #define T_DISPATCHER_CONTEXT DISPATCHER_CONTEXT
 #define PT_DISPATCHER_CONTEXT PDISPATCHER_CONTEXT
 
+#if defined(HOST_WINDOWS) && defined(TARGET_X86)
+typedef struct _KNONVOLATILE_CONTEXT {
+
+    DWORD Edi;
+    DWORD Esi;
+    DWORD Ebx;
+    DWORD Ebp;
+
+} KNONVOLATILE_CONTEXT, *PKNONVOLATILE_CONTEXT;
+
+typedef struct _KNONVOLATILE_CONTEXT_POINTERS_EX
+{
+    // The ordering of these fields should be aligned with that
+    // of corresponding fields in CONTEXT
+    //
+    // (See FillRegDisplay in inc/regdisp.h for details)
+    PDWORD Edi;
+    PDWORD Esi;
+    PDWORD Ebx;
+    PDWORD Edx;
+    PDWORD Ecx;
+    PDWORD Eax;
+
+    PDWORD Ebp;
+
+} KNONVOLATILE_CONTEXT_POINTERS_EX, *PKNONVOLATILE_CONTEXT_POINTERS_EX;
+
+#define KNONVOLATILE_CONTEXT_POINTERS KNONVOLATILE_CONTEXT_POINTERS_EX
+#define PKNONVOLATILE_CONTEXT_POINTERS PKNONVOLATILE_CONTEXT_POINTERS_EX
+#endif
 #define T_KNONVOLATILE_CONTEXT_POINTERS KNONVOLATILE_CONTEXT_POINTERS
 #define PT_KNONVOLATILE_CONTEXT_POINTERS PKNONVOLATILE_CONTEXT_POINTERS
 
@@ -684,9 +715,9 @@ typedef struct _T_KNONVOLATILE_CONTEXT_POINTERS {
 
 #if defined(TARGET_OSX) && defined(TARGET_X86)
 #define DAC_CS_NATIVE_DATA_SIZE 76
-#elif defined(TARGET_OSX) && defined(TARGET_AMD64)
+#elif defined(TARGET_APPLE) && defined(TARGET_AMD64)
 #define DAC_CS_NATIVE_DATA_SIZE 120
-#elif defined(TARGET_OSX) && defined(TARGET_ARM64)
+#elif defined(TARGET_APPLE) && defined(TARGET_ARM64)
 #define DAC_CS_NATIVE_DATA_SIZE 120
 #elif defined(TARGET_FREEBSD) && defined(TARGET_X86)
 #define DAC_CS_NATIVE_DATA_SIZE 12
@@ -694,19 +725,17 @@ typedef struct _T_KNONVOLATILE_CONTEXT_POINTERS {
 #define DAC_CS_NATIVE_DATA_SIZE 24
 #elif defined(TARGET_FREEBSD) && defined(TARGET_ARM64)
 #define DAC_CS_NATIVE_DATA_SIZE 24
-#elif defined(TARGET_LINUX) && defined(TARGET_ARM)
+#elif (defined(TARGET_LINUX) || defined(TARGET_ANDROID)) && defined(TARGET_ARM)
 #define DAC_CS_NATIVE_DATA_SIZE 80
-#elif defined(TARGET_LINUX) && defined(TARGET_ARM64)
+#elif (defined(TARGET_LINUX) || defined(TARGET_ANDROID)) && defined(TARGET_ARM64)
 #define DAC_CS_NATIVE_DATA_SIZE 104
 #elif defined(TARGET_LINUX) && defined(TARGET_LOONGARCH64)
 #define DAC_CS_NATIVE_DATA_SIZE 96
-#elif defined(TARGET_LINUX) && defined(TARGET_X86)
+#elif (defined(TARGET_LINUX) || defined(TARGET_ANDROID)) && defined(TARGET_X86)
 #define DAC_CS_NATIVE_DATA_SIZE 76
-#elif defined(TARGET_LINUX) && defined(TARGET_AMD64)
+#elif (defined(TARGET_LINUX) || defined(TARGET_ANDROID)) && defined(TARGET_AMD64)
 #define DAC_CS_NATIVE_DATA_SIZE 96
 #elif defined(TARGET_LINUX) && defined(TARGET_S390X)
-#define DAC_CS_NATIVE_DATA_SIZE 96
-#elif defined(TARGET_LINUX) && defined(TARGET_LOONGARCH64)
 #define DAC_CS_NATIVE_DATA_SIZE 96
 #elif defined(TARGET_LINUX) && defined(TARGET_RISCV64)
 #define DAC_CS_NATIVE_DATA_SIZE 96
@@ -720,6 +749,10 @@ typedef struct _T_KNONVOLATILE_CONTEXT_POINTERS {
 #define DAC_CS_NATIVE_DATA_SIZE 56
 #elif defined(__sun) && defined(TARGET_AMD64)
 #define DAC_CS_NATIVE_DATA_SIZE 48
+#elif defined(TARGET_HAIKU) && defined(TARGET_AMD64)
+#define DAC_CS_NATIVE_DATA_SIZE 56
+#elif defined(TARGET_WASM)
+#define DAC_CS_NATIVE_DATA_SIZE 76
 #else
 #warning
 #error  DAC_CS_NATIVE_DATA_SIZE is not defined for this architecture. This should be same value as PAL_CS_NATIVE_DATA_SIZE (aka sizeof(PAL_CS_NATIVE_DATA)).
@@ -746,4 +779,3 @@ struct T_CRITICAL_SECTION {
 #else
 #define T_CRITICAL_SECTION CRITICAL_SECTION
 #endif
-

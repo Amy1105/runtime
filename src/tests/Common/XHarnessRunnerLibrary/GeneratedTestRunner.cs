@@ -12,24 +12,26 @@ namespace XHarnessRunnerLibrary;
 
 public sealed class GeneratedTestRunner : TestRunner
 {
-    string _assemblyName;
-    TestFilter.ISearchClause? _filter;
-    Func<TestFilter?, TestSummary> _runTestsCallback;
-    HashSet<string> _testExclusionList;
+    private string _assemblyName;
+    private TestFilter.ISearchClause? _filter;
+    private Func<TestFilter?, TestSummary> _runTestsCallback;
+    private Dictionary<string, string> _testExclusionTable;
+
     private readonly Boolean _writeBase64TestResults;
 
     public GeneratedTestRunner(
         LogWriter logger, 
         Func<TestFilter?, TestSummary> runTestsCallback, 
         string assemblyName,
-        HashSet<string> testExclusionList,
+        Dictionary<string, string> testExclusionTable,
         bool writeBase64TestResults)
-        :base(logger)
+        : base(logger)
     {
         _assemblyName = assemblyName;
         _runTestsCallback = runTestsCallback;
-        _testExclusionList = testExclusionList;
+        _testExclusionTable = testExclusionTable;
         _writeBase64TestResults = writeBase64TestResults;
+
         ResultsFileName = $"{_assemblyName}.testResults.xml";
     }
 
@@ -39,7 +41,7 @@ public sealed class GeneratedTestRunner : TestRunner
 
     public override Task Run(IEnumerable<TestAssemblyInfo> testAssemblies)
     {
-        LastTestRun = _runTestsCallback(new TestFilter(_filter, _testExclusionList));
+        LastTestRun = _runTestsCallback(new TestFilter(_filter, _testExclusionTable));
         PassedTests = LastTestRun.PassedTests;
         FailedTests = LastTestRun.FailedTests;
         SkippedTests = LastTestRun.SkippedTests;
@@ -48,14 +50,14 @@ public sealed class GeneratedTestRunner : TestRunner
         return Task.CompletedTask;
     }
 
-    public override string WriteResultsToFile(XmlResultJargon xmlResultJargon)
+    public override Task<string> WriteResultsToFile(XmlResultJargon xmlResultJargon)
     {
         Debug.Assert(xmlResultJargon == XmlResultJargon.xUnit);
         File.WriteAllText(ResultsFileName, LastTestRun.GetTestResultOutput(_assemblyName));
-        return ResultsFileName;
+        return Task.FromResult(ResultsFileName);
     }
 
-    public override void WriteResultsToFile(TextWriter writer, XmlResultJargon jargon)
+    public override Task WriteResultsToFile(TextWriter writer, XmlResultJargon jargon)
     {
         Debug.Assert(jargon == XmlResultJargon.xUnit);
         string lastTestResults = LastTestRun.GetTestResultOutput(_assemblyName);
@@ -69,6 +71,7 @@ public sealed class GeneratedTestRunner : TestRunner
         {
             writer.WriteLine(lastTestResults);
         }
+        return Task.CompletedTask;
     }
 
     public override void SkipTests(IEnumerable<string> tests)

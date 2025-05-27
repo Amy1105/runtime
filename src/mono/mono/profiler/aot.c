@@ -334,7 +334,7 @@ start_helper_thread (void)
 
 	MonoNativeThreadId thread_id;
 
-	if (!mono_native_thread_create (&thread_id, helper_thread, NULL)) {
+	if (!mono_native_thread_create (&thread_id, (gpointer)helper_thread, NULL)) {
 		mono_profiler_printf_err ("Could not start aot profiler helper thread");
 		exit (1);
 	}
@@ -488,7 +488,7 @@ add_type (MonoProfiler *prof, MonoType *type)
 	switch (type->type) {
 #if 0
 	case MONO_TYPE_SZARRAY: {
-		int eid = add_type (prof, m_class_get_byval_arg (type->data.klass));
+		int eid = add_type (prof, m_class_get_byval_arg (m_type_data_get_klass_unchecked (type)));
 		if (eid == -1)
 			return -1;
 		int id = prof->id ++;
