@@ -517,7 +517,9 @@ namespace System.Net.Http
         private HttpMessageHandlerStage SetupHandlerChain()
         {
             // Clone the settings to get a relatively consistent view that won't change after this point.
+            //克隆设置以获得相对一致的视图，在此之后不会更改。
             // (This isn't entirely complete, as some of the collections it contains aren't currently deeply cloned.)
+            //（这并不完全完整，因为它包含的一些集合目前还没有被深度克隆。）
             HttpConnectionSettings settings = _settings.CloneAndNormalize();
 
             HttpConnectionPoolManager poolManager = new HttpConnectionPoolManager(settings);

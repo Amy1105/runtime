@@ -13,20 +13,28 @@ using System.Threading.Tasks;
 namespace System.Net.Http
 {
     // General flow of requests through the various layers:
-    //
+    //通过各个层的一般请求流:
     // (1) HttpConnectionPoolManager.SendAsync: Does proxy lookup
+    //（1） HttpConnectionPoolManager。SendAsync：进行代理查找
     // (2) HttpConnectionPoolManager.SendAsyncCore: Find or create connection pool
+    //（2） HttpConnectionPoolManager。SendAsyncCore:查找或创建连接池
     // (3) HttpConnectionPool.SendAsync: Handle basic/digest request auth
+    //（3） HttpConnectionPool。SendAsync：处理基本/摘要请求身份验证
     // (4) HttpConnectionPool.SendWithProxyAuthAsync: Handle basic/digest proxy auth
+    //（4） HttpConnectionPool。SendWithProxyAuthAsync：处理基本/摘要代理身份验证
     // (5) HttpConnectionPool.SendWithRetryAsync: Retrieve connection from pool, or create new
     //                                            Also, handle retry for failures on connection reuse
+    //（5） HttpConnectionPool。SendWithRetryAsync:从池中检索连接，或创建新的连接。此外，处理连接重用失败的重试
     // (6) HttpConnection.SendAsync: Handle negotiate/ntlm connection auth
+    //（6） Http连接。SendAsync：处理协商/ntlm连接身份验证
     // (7) HttpConnection.SendWithNtProxyAuthAsync: Handle negotiate/ntlm proxy auth
+    //（7） Http连接。SendWithNtProxyAuthAsync：处理协商/ntlm代理身份验证
     // (8) HttpConnection.SendAsyncCore: Write request to connection and read response
     //                                   Also, handle cookie processing
-    //
+    //（8） Http连接。SendAsyncCore：将请求写入连接并读取响应。此外，还处理cookie处理
     // Redirect and decompression handling are done above HttpConnectionPoolManager,
     // in RedirectHandler and DecompressionHandler respectively.
+    //重定向和解压缩处理分别在HttpConnectionPoolManager之上的RedirectHandler和DecompressionHandler中完成。
 
     /// <summary>Provides a set of connection pools, each for its own endpoint.</summary>
     internal sealed class HttpConnectionPoolManager : IDisposable

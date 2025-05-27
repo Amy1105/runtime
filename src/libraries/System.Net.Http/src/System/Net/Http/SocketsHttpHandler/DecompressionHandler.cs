@@ -11,6 +11,11 @@ using System.Threading.Tasks;
 
 namespace System.Net.Http
 {
+    /// <summary>
+    /// 解压缩处理器
+    /// 自动处理 HTTP 响应的 内容编码（如 gzip、deflate、br），对压缩后的响应体进行解压
+    /// 通常位于管道中段，在 RedirectHandler 之后，AuthHandler 之前
+    /// </summary>
     internal sealed class DecompressionHandler : HttpMessageHandlerStage
     {
         private readonly HttpMessageHandlerStage _innerHandler;

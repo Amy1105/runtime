@@ -10,6 +10,9 @@ using System.Threading.Tasks;
 
 namespace System.Net.Http.Metrics
 {
+    /// <summary>
+    /// ¼ÇÂ¼ÇëÇóºÄÊ±
+    /// </summary>
     internal sealed class MetricsHandler : HttpMessageHandlerStage
     {
         private readonly HttpMessageHandler _innerHandler;

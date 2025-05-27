@@ -6,6 +6,11 @@ using System.Threading.Tasks;
 
 namespace System.Net.Http
 {
+    /// <summary>
+    /// 认证连接处理器
+    /// 处理 HTTP 身份认证（如 NTLM、Kerberos、OAuth），管理认证令牌和连接复用
+    /// 通常位于管道中后段，靠近实际网络 I/O 的 HttpConnectionPool
+    /// </summary>
     internal sealed class HttpAuthenticatedConnectionHandler : HttpMessageHandlerStage
     {
         private readonly HttpConnectionPoolManager _poolManager;

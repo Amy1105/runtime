@@ -20,7 +20,7 @@ using System.Threading.Tasks;
 
 namespace System.Net.Http
 {
-    /// <summary>Provides a pool of connections to the same endpoint.</summary>
+    /// <summary>Provides a pool of connections to the same endpoint.提供到同一端点的连接池</summary>
     internal sealed partial class HttpConnectionPool : IDisposable
     {
         /// <summary>The maximum number of times to retry a request after a failure on an established connection.</summary>
@@ -36,7 +36,9 @@ namespace System.Net.Http
         private readonly HttpConnectionKind _kind;
         private readonly Uri? _proxyUri;
 
-        /// <summary>The origin authority used to construct the <see cref="HttpConnectionPool"/>.</summary>
+        /// <summary>The origin authority used to construct the <see cref="HttpConnectionPool"/>.
+        ///用于构造<see cref="HttpConnectionPool"/>的源机构。
+        /// </summary>
         private readonly HttpAuthority _originAuthority;
 
         /// <summary>The User-Agent header to use when creating a CONNECT tunnel.</summary>

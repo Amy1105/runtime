@@ -8,6 +8,9 @@ using System.Threading.Tasks;
 
 namespace System.Net.Http
 {
+    /// <summary>
+    /// 处理 3xx 重定向
+    /// </summary>
     internal sealed class RedirectHandler : HttpMessageHandlerStage
     {
         private readonly HttpMessageHandlerStage _initialInnerHandler;       // Used for initial request
@@ -79,7 +82,7 @@ namespace System.Net.Http
                     }
                 }
 
-                // Issue the redirected request.
+                // Issue the redirected request. 发出重定向请求。
                 response = await _redirectInnerHandler.SendAsync(request, async, cancellationToken).ConfigureAwait(false);
             }
 

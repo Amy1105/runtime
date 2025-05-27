@@ -11,7 +11,8 @@ using System.Threading.Tasks;
 namespace System.Net.Http
 {
     /// <summary>
-    /// DiagnosticHandler notifies DiagnosticSource subscribers about outgoing Http requests
+    /// 用于收集和上报 HTTP 请求的 性能指标（Metrics）和诊断信息，比如请求耗时、响应状态码、网络错误等
+    /// 通常是责任链的 最外层，最先接收请求，最后处理响应
     /// </summary>
     internal sealed class DiagnosticsHandler : HttpMessageHandlerStage
     {
