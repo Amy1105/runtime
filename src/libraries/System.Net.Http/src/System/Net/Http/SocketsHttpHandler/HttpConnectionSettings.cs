@@ -14,7 +14,8 @@ using System.Threading.Tasks;
 
 namespace System.Net.Http
 {
-    /// <summary>Provides a state bag of settings for configuring HTTP connections.</summary>
+    /// <summary>Provides a state bag of settings for configuring HTTP connections.
+    /// 提供用于配置HTTP连接的设置状态包。</summary>
     internal sealed class HttpConnectionSettings
     {
         internal DecompressionMethods _automaticDecompression = HttpHandlerDefaults.DefaultAutomaticDecompression;

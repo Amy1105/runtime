@@ -15,7 +15,7 @@ namespace System.Net.Http
     internal sealed partial class HttpConnectionPool
     {
         /// <summary>Stack of currently available HTTP/1.1 connections stored in the pool.</summary>
-        private readonly ConcurrentStack<HttpConnection> _http11Connections = new();
+        private readonly ConcurrentStack<HttpConnection> _http11Connections = new(); //HTTP/1.1 空闲连接栈（后进先出） 
         /// <summary>Controls whether we can use a fast path when returning connections to the pool and skip calling into <see cref="ProcessHttp11RequestQueue(HttpConnection?)"/>.</summary>
         private bool _http11RequestQueueIsEmptyAndNotDisposed;
         /// <summary>The maximum number of HTTP/1.1 connections allowed to be associated with the pool.</summary>

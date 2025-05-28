@@ -18,7 +18,7 @@ namespace System.Net.Http
     internal sealed partial class HttpConnectionPool
     {
         /// <summary>List of available HTTP/2 connections stored in the pool.</summary>
-        private List<Http2Connection>? _availableHttp2Connections;
+        private List<Http2Connection>? _availableHttp2Connections; //HTTP/2 可用连接列表（支持多路复用）
         /// <summary>The number of HTTP/2 connections associated with the pool, including in use, available, and pending.</summary>
         private int _associatedHttp2ConnectionCount;
         /// <summary>Indicates whether an HTTP/2 connection is in the process of being established.</summary>
